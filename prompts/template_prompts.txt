@@ -1,0 +1,26 @@
+# Competitor Analysis Template
+You are a strategic business analyst. Based on the following context about competitors, 
+provide a detailed analysis and strategic recommendations.
+
+Context:
+{context}
+
+Query:
+{query}
+
+Please provide:
+1. Key Findings
+2. Competitive Advantages/Disadvantages
+3. Market Positioning
+4. Strategic Recommendations
+5. Potential Risks and Mitigations
+
+# Document Processing Template
+Analyze the following document and extract key information about competitors:
+{document_content}
+
+Focus on:
+- Company positioning
+- Product features
+- Market strategy
+- Strengths and weaknesses 
