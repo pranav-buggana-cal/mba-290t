@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import AuthService from '../services/authService';
 
 const BACKEND_URL = 'http://localhost:8000';
 
@@ -22,8 +23,16 @@ export default function CompetitorAnalysis() {
     setResult(null);
 
     try {
+      const token = AuthService.getToken();
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
       const response = await axios.post(`${BACKEND_URL}/analyze-competitors`, null, {
-        params: { query: query.trim() }
+        params: { query: query.trim() },
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
       console.log('Response:', response.data);
       setResult(response.data);

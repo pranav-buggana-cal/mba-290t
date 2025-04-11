@@ -21,12 +21,16 @@ export default function DocumentUpload() {
     });
 
     try {
-      const authHeaders = AuthService.getAuthHeaders();
+      const token = AuthService.getToken();
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
       const response = await axios.post('http://localhost:8000/upload-documents', formData, {
         headers: {
-          ...authHeaders,
-          'Content-Type': 'multipart/form-data',
-        } as any,
+          'Authorization': `Bearer ${token}`,
+          // Don't set Content-Type, let the browser set it with the boundary
+        },
       });
       setMessage({ type: 'success', text: 'Documents uploaded successfully!' });
     } catch (error: any) {
@@ -104,8 +108,8 @@ export default function DocumentUpload() {
               type="submit"
               disabled={uploading}
               className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white ${uploading
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
                 }`}
             >
               {uploading ? 'Uploading...' : 'Upload'}
