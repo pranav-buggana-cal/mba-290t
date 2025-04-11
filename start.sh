@@ -1,5 +1,30 @@
 #!/bin/bash
 
+# Check if .env file exists
+if [ ! -f .env ]; then
+    echo "❌ Error: .env file not found"
+    echo "Please create a .env file with the following variables:"
+    echo "AUTH_USERNAME=your_username"
+    echo "AUTH_PASSWORD=your_password"
+    echo "JWT_SECRET_KEY=your_jwt_secret"
+    echo "OPENAI_API_KEY=your_openai_api_key"
+    exit 1
+fi
+
+# Load environment variables
+set -a
+source .env
+set +a
+
+# Check for required environment variables
+required_vars=("AUTH_USERNAME" "AUTH_PASSWORD" "JWT_SECRET_KEY" "OPENAI_API_KEY")
+for var in "${required_vars[@]}"; do
+    if [ -z "${!var}" ]; then
+        echo "❌ Error: $var is not set in .env file"
+        exit 1
+    fi
+done
+
 echo "🔄 Stopping existing processes..."
 
 # Kill any existing Python/FastAPI processes
@@ -14,7 +39,7 @@ echo "🧹 Cleaning up..."
 sleep 2  # Wait for processes to fully terminate
 
 echo "🚀 Starting backend server..."
-# Start the FastAPI backend in the background
+# Start the FastAPI backend in the background with environment variables
 python main.py &
 BACKEND_PID=$!
 
@@ -35,6 +60,10 @@ echo "📝 Access points:"
 echo "Frontend: http://localhost:5173"
 echo "Backend API: http://localhost:8000"
 echo "API Docs: http://localhost:8000/docs"
+echo ""
+echo "🔑 Login credentials:"
+echo "Username: $AUTH_USERNAME"
+echo "Password: $AUTH_PASSWORD"
 echo ""
 echo "Press Ctrl+C to stop all servers"
 

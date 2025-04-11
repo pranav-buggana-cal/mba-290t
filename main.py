@@ -1,7 +1,16 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordRequestForm
+from services.auth_service import (
+    authenticate_user,
+    create_access_token,
+    get_current_active_user,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+)
+from services.rate_limiter import rate_limiter
+from datetime import timedelta
 import os
 from typing import List
 import logging
@@ -32,20 +41,54 @@ app.add_middleware(
 rag_service = RAGService()
 doc_service = DocGenerationService()
 
+
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    if request.url.path not in [
+        "/docs",
+        "/openapi.json",
+        "/token",
+    ]:  # Don't rate limit docs and login
+        await rate_limiter.check_rate_limit(request)
+    response = await call_next(request)
+    return response
+
+
+@app.post("/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["username"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 @app.get("/")
 async def root():
     """Welcome endpoint with basic API information."""
     return {
         "message": "Welcome to the Competitor Analysis RAG System",
         "endpoints": {
+            "/token": "POST - Login to get access token",
             "/upload-documents": "POST - Upload competitor documents for analysis",
             "/analyze-competitors": "POST - Generate competitor analysis",
-            "/docs": "GET - View API documentation"
-        }
+            "/docs": "GET - View API documentation",
+        },
     }
 
+
 @app.post("/upload-documents")
-async def upload_documents(files: List[UploadFile] = File(...)):
+async def upload_documents(
+    files: List[UploadFile] = File(...),
+    current_user: dict = Depends(get_current_active_user),
+):
     """Upload and process documents into the vector database."""
     try:
         logger.info(f"Received {len(files)} files")
@@ -58,44 +101,54 @@ async def upload_documents(files: List[UploadFile] = File(...)):
         logger.error(f"Error processing documents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/download/{filename}")
-async def download_file(filename: str):
+async def download_file(
+    filename: str, current_user: dict = Depends(get_current_active_user)
+):
     """Download a generated analysis file."""
     file_path = os.path.join("output", filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(
         file_path,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=filename
+        media_type=(
+            "application/vnd.openxmlformats-officedocument" ".wordprocessingml.document"
+        ),
+        filename=filename,
     )
 
+
 @app.post("/analyze-competitors")
-async def analyze_competitors(query: str):
+async def analyze_competitors(
+    query: str, current_user: dict = Depends(get_current_active_user)
+):
     """Generate competitor analysis based on stored documents."""
     try:
         logger.info(f"Received analysis query: {query}")
         context = await rag_service.get_relevant_context(query)
         logger.info(f"Retrieved {len(context)} relevant contexts")
-        
+
         analysis = await rag_service.generate_analysis(query, context)
         logger.info("Generated analysis")
-        
+
         doc_path = await doc_service.create_analysis_document(analysis)
         filename = os.path.basename(doc_path)
         download_url = f"/download/{filename}"
-        
+
         logger.info(f"Created document at: {doc_path}")
-        
+
         return {
             "message": "Analysis completed",
             "document_path": download_url,
-            "summary": analysis[:500] + "..."
+            "summary": analysis[:500] + "...",
         }
     except Exception as e:
         logger.error(f"Error analyzing competitors: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,0 +1,21 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: competitor-analysis-frontend
+spec:
+  template:
+    spec:
+      containers:
+      - image: gcr.io/${PROJECT_ID}/competitor-analysis-frontend
+        ports:
+        - containerPort: 5173
+        env:
+        - name: VITE_API_URL
+          value: https://competitor-analysis-backend-${PROJECT_ID}.a.run.app
+        resources:
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+          requests:
+            cpu: "500m"
+            memory: "256Mi" 
