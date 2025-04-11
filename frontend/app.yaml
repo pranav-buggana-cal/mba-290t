@@ -1,0 +1,29 @@
+runtime: nodejs20
+service: default
+
+env_variables:
+  VITE_API_URL: "https://mba290t-backend-usb4wrjfkq-uc.a.run.app"
+
+handlers:
+  - url: /assets/(.*\.js)
+    static_files: dist/assets/\1
+    upload: dist/assets/.*\.js
+    mime_type: application/javascript
+    secure: always
+  - url: /assets/(.*\.css)
+    static_files: dist/assets/\1
+    upload: dist/assets/.*\.css
+    mime_type: text/css
+    secure: always
+  - url: /assets/(.*\.(png|jpg|jpeg|gif|ico|svg))
+    static_files: dist/assets/\1
+    upload: dist/assets/.*\.(png|jpg|jpeg|gif|ico|svg)
+    secure: always
+  - url: /(.*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot))
+    static_files: dist/\1
+    upload: dist/.*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)
+    secure: always
+  - url: /.*
+    static_files: dist/index.html
+    upload: dist/index.html
+    secure: always 
