@@ -44,9 +44,33 @@ export default function CompetitorAnalysis() {
     }
   };
 
-  const handleDownload = (downloadPath: string) => {
-    // Open in new tab using the backend URL
-    window.open(`${BACKEND_URL}${downloadPath}`, '_blank');
+  const handleDownload = async (downloadPath: string) => {
+    try {
+      const token = AuthService.getToken();
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+
+      const response = await axios.get(`${BACKEND_URL}${downloadPath}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        responseType: 'blob'
+      });
+
+      // Create a blob URL and trigger download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', downloadPath.split('/').pop() || 'analysis.docx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      console.error('Download error:', error);
+      setError(error.response?.data?.detail || 'Failed to download analysis. Please try again.');
+    }
   };
 
   return (
