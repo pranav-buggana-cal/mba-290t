@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 import { CloudArrowUpIcon } from '@heroicons/react/24/outline';
+import AuthService from '../services/authService';
 
 export default function DocumentUpload() {
   const [files, setFiles] = useState<FileList | null>(null);
@@ -20,10 +21,12 @@ export default function DocumentUpload() {
     });
 
     try {
+      const authHeaders = AuthService.getAuthHeaders();
       const response = await axios.post('http://localhost:8000/upload-documents', formData, {
         headers: {
+          ...authHeaders,
           'Content-Type': 'multipart/form-data',
-        },
+        } as any,
       });
       setMessage({ type: 'success', text: 'Documents uploaded successfully!' });
     } catch (error: any) {
@@ -45,7 +48,7 @@ export default function DocumentUpload() {
     if (e.target.files) {
       const fileList = Array.from(e.target.files);
       const invalidFiles = fileList.filter(file => !validateFile(file));
-      
+
       if (invalidFiles.length > 0) {
         setMessage({
           type: 'error',
@@ -54,7 +57,7 @@ export default function DocumentUpload() {
         e.target.value = '';
         return;
       }
-      
+
       setFiles(e.target.files);
       setMessage(null);
     }
@@ -99,10 +102,9 @@ export default function DocumentUpload() {
           <div className="mt-5">
             <button
               type="submit"
-              disabled={!files?.length || uploading}
-              className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white 
-                ${!files?.length || uploading 
-                  ? 'bg-gray-400 cursor-not-allowed' 
+              disabled={uploading}
+              className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white ${uploading
+                  ? 'bg-gray-400 cursor-not-allowed'
                   : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
                 }`}
             >
@@ -111,13 +113,12 @@ export default function DocumentUpload() {
           </div>
         </form>
         {message && (
-          <div className={`mt-4 p-4 rounded-md ${
-            message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-          }`}>
+          <div className={`mt-4 p-4 rounded-md ${message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+            }`}>
             {message.text}
           </div>
         )}
       </div>
     </div>
   );
-} 
+}
