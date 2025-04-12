@@ -2,7 +2,7 @@ runtime: nodejs20
 service: default
 
 env_variables:
-  VITE_API_URL: "https://genai-strategy-class-backend-ue.a.run.app"
+  VITE_API_URL: "https://competitor-analysis-backend-342114956303.us-central1.run.app"
 
 handlers:
   - url: /assets

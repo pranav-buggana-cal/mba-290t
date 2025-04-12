@@ -6,10 +6,24 @@ spec:
   template:
     spec:
       containers:
-      - image: gcr.io/${PROJECT_ID}/competitor-analysis-backend
+      - image: gcr.io/genai-strategy-class/competitor-analysis-backend:latest
         ports:
         - containerPort: 8000
+        command: ["uvicorn"]
+        args: ["main:app", "--host", "0.0.0.0", "--port", "8000"]
         env:
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openai-api-key
+              key: latest
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret-key
+              key: latest
+        - name: CORS_ORIGINS
+          value: "http://localhost:5173,https://genai-strategy-class.ue.r.appspot.com,https://competitor-analysis-frontend-342114956303.ue.r.appspot.com"
         - name: AUTH_USERNAME
           valueFrom:
             secretKeyRef:
@@ -19,16 +33,6 @@ spec:
           valueFrom:
             secretKeyRef:
               name: auth-password
-              key: latest
-        - name: JWT_SECRET_KEY
-          valueFrom:
-            secretKeyRef:
-              name: jwt-secret-key
-              key: latest
-        - name: OPENAI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: openai-api-key
               key: latest
         resources:
           limits:

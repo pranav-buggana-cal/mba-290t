@@ -9,16 +9,29 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+        setIsLoading(true);
+        console.log('Starting login process...');
+        console.log('API URL:', import.meta.env.VITE_API_URL);
 
-        const success = await AuthService.login(username, password);
-        if (success) {
-            onLoginSuccess();
-        } else {
-            setError('Invalid credentials');
+        try {
+            const success = await AuthService.login(username, password);
+            if (success) {
+                console.log('Login successful, calling onLoginSuccess');
+                onLoginSuccess();
+            } else {
+                console.error('Login failed');
+                setError('Invalid credentials. Please try again.');
+            }
+        } catch (err) {
+            console.error('Login error:', err);
+            setError('An error occurred during login. Please try again.');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -45,6 +58,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                                 placeholder="Username"
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
+                                disabled={isLoading}
                             />
                         </div>
                         <div>
@@ -60,6 +74,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                                 placeholder="Password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
+                                disabled={isLoading}
                             />
                         </div>
                     </div>
@@ -73,9 +88,11 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                     <div>
                         <button
                             type="submit"
-                            className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                            className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white ${isLoading ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'
+                                } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
+                            disabled={isLoading}
                         >
-                            Sign in
+                            {isLoading ? 'Signing in...' : 'Sign in'}
                         </button>
                     </div>
                 </form>

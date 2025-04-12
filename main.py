@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -44,6 +44,25 @@ rag_service = RAGService()
 doc_service = DocGenerationService()
 
 
+# Global authentication middleware
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Skip authentication for these paths
+    if request.url.path in ["/token", "/docs", "/openapi.json"]:
+        return await call_next(request)
+
+    # Check for Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
     if request.url.path not in [
@@ -73,7 +92,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 
 @app.get("/")
-async def root():
+async def root(current_user: dict = Depends(get_current_active_user)):
     """Welcome endpoint with basic API information."""
     return {
         "message": "Welcome to the Competitor Analysis RAG System",

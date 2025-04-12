@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import axios from 'axios';
-import { CloudArrowUpIcon } from '@heroicons/react/24/outline';
+import { API_CONFIG } from '../config/api';
 import AuthService from '../services/authService';
+import { CloudArrowUpIcon } from '@heroicons/react/24/outline';
 
 export default function DocumentUpload() {
   const [files, setFiles] = useState<FileList | null>(null);
@@ -21,18 +21,19 @@ export default function DocumentUpload() {
     });
 
     try {
-      const token = AuthService.getToken();
-      if (!token) {
-        throw new Error('Not authenticated');
+      const response = await fetch(API_CONFIG.ENDPOINTS.UPLOAD, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${AuthService.getToken()}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Upload failed');
       }
 
-      await axios.post(`${import.meta.env.VITE_API_URL}/upload-documents`, formData, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          // Don't set Content-Type, let the browser set it with the boundary
-        },
-      });
-      setMessage({ type: 'success', text: 'Documents uploaded successfully!' });
+      setMessage({ type: 'success', text: 'Files uploaded successfully!' });
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || 'Failed to upload documents. Please try again.';
       setMessage({ type: 'error', text: errorMessage });
