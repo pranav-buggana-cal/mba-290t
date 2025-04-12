@@ -2,26 +2,15 @@ runtime: nodejs20
 service: default
 
 env_variables:
-  VITE_API_URL: "https://mba290t-backend-usb4wrjfkq-uc.a.run.app"
+  VITE_API_URL: "https://genai-strategy-class-backend-ue.a.run.app"
 
 handlers:
-  - url: /assets/(.*\.js)
-    static_files: dist/assets/\1
-    upload: dist/assets/.*\.js
-    mime_type: application/javascript
+  - url: /assets
+    static_dir: dist/assets
     secure: always
-  - url: /assets/(.*\.css)
-    static_files: dist/assets/\1
-    upload: dist/assets/.*\.css
-    mime_type: text/css
-    secure: always
-  - url: /assets/(.*\.(png|jpg|jpeg|gif|ico|svg))
-    static_files: dist/assets/\1
-    upload: dist/assets/.*\.(png|jpg|jpeg|gif|ico|svg)
-    secure: always
-  - url: /(.*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot))
-    static_files: dist/\1
-    upload: dist/.*\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)
+  - url: /vite.svg
+    static_files: dist/vite.svg
+    upload: dist/vite.svg
     secure: always
   - url: /.*
     static_files: dist/index.html

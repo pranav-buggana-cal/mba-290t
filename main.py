@@ -32,7 +32,9 @@ app.mount("/output", StaticFiles(directory="output"), name="output")
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite's default port
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(
+        ","
+    ),  # Allow both local and production URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

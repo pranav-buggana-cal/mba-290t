@@ -2,8 +2,6 @@ import { useState } from 'react';
 import axios from 'axios';
 import AuthService from '../services/authService';
 
-const BACKEND_URL = 'http://localhost:8000';
-
 export default function CompetitorAnalysis() {
   const [query, setQuery] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
@@ -28,7 +26,7 @@ export default function CompetitorAnalysis() {
         throw new Error('Not authenticated');
       }
 
-      const response = await axios.post(`${BACKEND_URL}/analyze-competitors`, null, {
+      const response = await axios.post(`${import.meta.env.VITE_API_URL}/analyze-competitors`, null, {
         params: { query: query.trim() },
         headers: {
           'Authorization': `Bearer ${token}`
@@ -51,7 +49,7 @@ export default function CompetitorAnalysis() {
         throw new Error('Not authenticated');
       }
 
-      const response = await axios.get(`${BACKEND_URL}${downloadPath}`, {
+      const response = await axios.get(`${import.meta.env.VITE_API_URL}${downloadPath}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         },

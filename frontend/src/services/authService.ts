@@ -12,7 +12,7 @@ class AuthService {
             formData.append('username', username);
             formData.append('password', password);
 
-            const response = await fetch('http://localhost:8000/token', {
+            const response = await fetch(`${import.meta.env.VITE_API_URL}/token`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',

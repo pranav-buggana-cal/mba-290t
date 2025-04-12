@@ -26,7 +26,7 @@ export default function DocumentUpload() {
         throw new Error('Not authenticated');
       }
 
-      await axios.post('http://localhost:8000/upload-documents', formData, {
+      await axios.post(`${import.meta.env.VITE_API_URL}/upload-documents`, formData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           // Don't set Content-Type, let the browser set it with the boundary
