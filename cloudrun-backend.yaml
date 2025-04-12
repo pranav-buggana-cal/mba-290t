@@ -23,7 +23,7 @@ spec:
               name: jwt-secret-key
               key: latest
         - name: CORS_ORIGINS
-          value: "http://localhost:5173,https://genai-strategy-class.ue.r.appspot.com,https://competitor-analysis-frontend-342114956303.ue.r.appspot.com"
+          value: "http://localhost:5173,https://competitor-analysis-frontend-342114956303.us-central1.run.app"
         - name: AUTH_USERNAME
           valueFrom:
             secretKeyRef:
