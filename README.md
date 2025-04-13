@@ -7,6 +7,7 @@ A full-stack application with a FastAPI backend and React frontend, featuring Op
 - Docker and Docker Compose
 - OpenAI API key
 - Node.js (for local development)
+- Google Cloud SDK (for deployment)
 
 ## Setup
 
@@ -53,6 +54,13 @@ npm install
 npm start
 ```
 
+### Proxy Server (for CORS handling)
+```bash
+cd proxy
+npm install
+npm start
+```
+
 ## API Documentation
 
 Once the application is running, you can access the API documentation at:
@@ -66,6 +74,18 @@ Once the application is running, you can access the API documentation at:
 - CORS protection
 - Environment variable configuration
 - Secure API key management
+
+## Deployment
+
+The application is configured for deployment to Google Cloud Run:
+
+```bash
+# Deploy backend
+gcloud run services replace cloudrun-backend.yaml --platform managed --region us-central1
+
+# Deploy frontend
+gcloud run services replace cloudrun-frontend.yaml --platform managed --region us-central1
+```
 
 ## License
 
