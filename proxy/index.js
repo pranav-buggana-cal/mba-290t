@@ -3,8 +3,8 @@ const cors = require('cors');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
-const PORT = 3001;
-const TARGET = 'https://competitor-analysis-backend-342114956303.us-central1.run.app';
+const PORT = process.env.PORT || 3001;
+const TARGET = process.env.TARGET || 'https://competitor-analysis-backend-342114956303.us-central1.run.app';
 
 // Enable CORS for all routes
 app.use(cors());

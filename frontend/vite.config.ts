@@ -7,15 +7,21 @@ export default defineConfig(({ mode }) => {
   // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
   const env = loadEnv(mode, process.cwd())
 
-  // Check if the environment variable is available or use a default
+  // Check if the environment variables are available or use defaults
   const apiUrl = env.VITE_API_URL || 'http://localhost:8000'
+  const proxyUrl = env.VITE_API_PROXY_URL || ''
+
   console.log('Building with API URL:', apiUrl)
+  console.log('Building with Proxy URL:', proxyUrl)
 
   return {
     plugins: [react()],
     define: {
-      // Explicitly define the environment variable
+      // Explicitly define the environment variables
       'import.meta.env.VITE_API_URL': JSON.stringify(apiUrl),
+      'import.meta.env.VITE_API_PROXY_URL': JSON.stringify(proxyUrl),
+      // Force proxy usage in production
+      'import.meta.env.FORCE_PROXY': mode === 'production' ? 'true' : 'false'
     },
     server: {
       // Force the server to use port 5173, which is allowed in the Cloud Run CORS configuration
@@ -29,7 +35,7 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, ''),
           secure: true,
-          configure: (proxy, options) => {
+          configure: (_, options) => {
             // Additional proxy configuration if needed
             console.log('Proxy configured with target:', options.target);
           }

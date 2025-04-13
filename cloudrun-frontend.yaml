@@ -12,6 +12,8 @@ spec:
         env:
         - name: VITE_API_URL
           value: https://competitor-analysis-backend-342114956303.us-central1.run.app
+        - name: VITE_API_PROXY_URL
+          value: https://competitor-analysis-proxy-342114956303.us-central1.run.app/api
         resources:
           limits:
             cpu: "1"

@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { API_CONFIG } from '../config/api';
+import { API_CONFIG, getApiUrl } from '../config/api';
 import AuthService from '../services/authService';
 import { CloudArrowUpIcon } from '@heroicons/react/24/outline';
 
@@ -10,10 +10,10 @@ export default function DocumentUpload() {
   const [debug, setDebug] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Upload function that prefers proxy URL if available
+  // Upload function that uses getApiUrl for consistent proxy usage
   const uploadFile = async (file: File) => {
     try {
-      // Create a very basic FormData with just the file
+      // Create a FormData with the file
       const formData = new FormData();
       formData.append('files', file);
 
@@ -33,22 +33,14 @@ export default function DocumentUpload() {
         throw new Error('No authentication token found');
       }
 
-      // Determine whether to use the proxy URL
-      const useProxy = !!API_CONFIG.PROXY_URL;
-      const baseUrl = useProxy ? API_CONFIG.PROXY_URL : API_CONFIG.BASE_URL;
+      // Get the upload URL using the getApiUrl helper
+      const url = getApiUrl(API_CONFIG.ENDPOINTS.UPLOAD);
 
-      // Build the URL - make sure we append the correct endpoint path
-      const url = useProxy ?
-        `${baseUrl}/upload-documents` :
-        `${baseUrl}${API_CONFIG.ENDPOINTS.UPLOAD}`;
-
-      console.log(`Uploading to: ${url} (using proxy: ${useProxy})`);
-      setDebug(prev => prev + `\nUploading to: ${url} (using proxy: ${useProxy})`);
+      console.log(`Uploading to URL: ${url}`);
+      setDebug(prev => prev + `\nUploading to URL: ${url}`);
+      console.log(`Using token (truncated): ${token.substring(0, 15)}...`);
 
       // Use standard CORS mode with proper authorization
-      console.log('Attempting upload...');
-      setDebug(prev => prev + `\nAttempting upload...`);
-
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -74,98 +66,8 @@ export default function DocumentUpload() {
       setDebug(prev => prev + `\nSuccess: ${JSON.stringify(data)}`);
       return data;
     } catch (error: any) {
-      // Special handling for CORS errors
-      if (error.message === 'Failed to fetch' || error.message.includes('NetworkError')) {
-        const corsMessage = 'CORS error: The server is not configured to accept requests from this origin. ' +
-          'This is typically a server-side configuration issue. Options to fix:\n' +
-          '1. Configure the backend server to accept requests from your frontend origin\n' +
-          '2. Set up a proxy server in your development environment\n' +
-          '3. Use a CORS browser extension for testing (not for production)';
-
-        console.error(corsMessage);
-        setDebug(prev => prev + `\n${corsMessage}`);
-        throw new Error(corsMessage);
-      }
-
-      console.error('Error during upload:', error);
+      console.error('Upload error:', error);
       setDebug(prev => prev + `\nError caught: ${error.message}`);
-      throw error;
-    }
-  };
-
-  // Test function to try direct upload with curl-like approach
-  const testDirectUpload = async (file: File) => {
-    try {
-      setDebug('Starting direct upload test...\n');
-
-      // Read file as binary string
-      const reader = new FileReader();
-      const fileContent = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsBinaryString(file);
-      });
-
-      setDebug(prev => prev + `File read as binary, length: ${fileContent.length} bytes\n`);
-
-      // Get token
-      const token = AuthService.getToken();
-      if (!token) {
-        throw new Error('No authentication token found');
-      }
-
-      // Determine whether to use the proxy URL
-      const useProxy = !!API_CONFIG.PROXY_URL;
-      const baseUrl = useProxy ? API_CONFIG.PROXY_URL : API_CONFIG.BASE_URL;
-
-      // Build the URL - ensure correct path for proxy
-      const url = useProxy ?
-        `${baseUrl}/upload-documents` :
-        `${baseUrl}${API_CONFIG.ENDPOINTS.UPLOAD}`;
-
-      if (useProxy) {
-        setDebug(prev => prev + `Using proxy for request (${API_CONFIG.PROXY_URL})\n`);
-      }
-
-      // Use the browser's fetch with binary data
-      const formData = new FormData();
-
-      // Create a blob with the binary data and correct type
-      const blob = new Blob([fileContent], { type: file.type });
-      formData.append('files', blob, file.name);
-
-      setDebug(prev => prev + 'Created blob from binary data and appended to FormData\n');
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      setDebug(prev => prev + `Response status: ${response.status}\n`);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        setDebug(prev => prev + `Error: ${errorText}\n`);
-        throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setDebug(prev => prev + `Success: ${JSON.stringify(data)}\n`);
-      return data;
-    } catch (error: any) {
-      // Special handling for CORS errors
-      if (error.message === 'Failed to fetch') {
-        const corsMessage = 'CORS error: The server is not configured to accept requests from this origin. ' +
-          'You need to configure the backend server to accept requests from your frontend origin.';
-
-        setDebug(prev => prev + `\n${corsMessage}\n`);
-        throw new Error(corsMessage);
-      }
-
-      setDebug(prev => prev + `Error caught: ${error.message}\n`);
       throw error;
     }
   };
@@ -179,33 +81,22 @@ export default function DocumentUpload() {
     setDebug('');
 
     try {
-      // Check for a selected file
-      const file = files[0]; // Just try with the first file
-      console.log(`Trying to upload file: ${file.name} (${file.size} bytes)`);
+      console.log("Files to upload:", files);
+      setDebug(prev => prev + `\nNumber of files: ${files.length}`);
 
-      // Try direct upload first
-      try {
+      // Process each file
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        console.log(`Adding file ${i}: ${file.name} ${file.size} ${file.type}`);
+        setDebug(prev => prev + `\nAdding file ${i}: ${file.name} ${file.size} ${file.type}`);
+
         await uploadFile(file);
-        setMessage({
-          type: 'success',
-          text: 'File uploaded successfully!'
-        });
-      } catch (directError: any) {
-        console.error('Direct upload failed, trying alternate method:', directError);
-        setDebug(prev => prev + '\n\nDirect upload failed, trying alternate method...\n');
-
-        // If it's a CORS error, don't try the second method (it will fail for the same reason)
-        if (directError.message.includes('CORS error')) {
-          throw directError;
-        }
-
-        // Try the binary approach as fallback
-        await testDirectUpload(file);
-        setMessage({
-          type: 'success',
-          text: 'File uploaded successfully with alternate method!'
-        });
       }
+
+      setMessage({
+        type: 'success',
+        text: 'Files uploaded successfully!'
+      });
 
       // Reset file input
       if (fileInputRef.current) {
@@ -213,10 +104,10 @@ export default function DocumentUpload() {
       }
       setFiles(null);
     } catch (error: any) {
-      console.error('All upload methods failed:', error);
+      console.error('Upload error:', error);
       setMessage({
         type: 'error',
-        text: `Failed to upload document: ${error.message}. Check the debug output for details.`
+        text: `Failed to upload document: ${error.message}`
       });
     } finally {
       setUploading(false);

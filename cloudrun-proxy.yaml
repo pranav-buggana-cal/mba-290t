@@ -1,0 +1,21 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: competitor-analysis-proxy
+spec:
+  template:
+    spec:
+      containers:
+      - image: gcr.io/genai-strategy-class/competitor-analysis-proxy:latest
+        ports:
+        - containerPort: 3001
+        env:
+        - name: TARGET
+          value: https://competitor-analysis-backend-342114956303.us-central1.run.app
+        resources:
+          limits:
+            cpu: "1"
+            memory: "256Mi"
+          requests:
+            cpu: "250m"
+            memory: "128Mi" 
