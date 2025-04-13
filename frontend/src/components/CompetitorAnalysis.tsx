@@ -77,19 +77,19 @@ export default function CompetitorAnalysis() {
       <div className="px-4 py-5 sm:p-6">
         <h3 className="text-lg font-medium leading-6 text-gray-900">Analyze Competitors</h3>
         <div className="mt-2 max-w-xl text-sm text-gray-500">
-          <p>Enter your query to generate competitor analysis</p>
+          <p>Enter a brief description of your business to generate competitor analysis</p>
         </div>
         <form onSubmit={handleSubmit} className="mt-5">
           <div>
             <label htmlFor="query" className="block text-sm font-medium text-gray-700">
-              Analysis Query
+              Describe your business (1-2 sentences)
             </label>
             <div className="mt-1">
               <textarea
                 id="query"
                 rows={4}
                 className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md"
-                placeholder="e.g., Analyze the competitive landscape and identify key market opportunities..."
+                placeholder="e.g., We're a startup focusing on sustainable packaging solutions for e-commerce businesses..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
