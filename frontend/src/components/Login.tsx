@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import AuthService from '../services/authService';
+import { API_CONFIG } from '../config/api';
 
 interface LoginProps {
     onLoginSuccess: () => void;
@@ -16,7 +17,11 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         setError('');
         setIsLoading(true);
         console.log('Starting login process...');
-        console.log('API URL:', import.meta.env.VITE_API_URL);
+
+        // Log API configuration for debugging
+        console.log('API Base URL:', API_CONFIG.BASE_URL);
+        console.log('Proxy URL configured:', API_CONFIG.PROXY_URL || 'None');
+        console.log('Will use proxy:', !!API_CONFIG.PROXY_URL);
 
         try {
             const success = await AuthService.login(username, password);

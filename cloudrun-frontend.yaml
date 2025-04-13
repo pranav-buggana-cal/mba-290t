@@ -6,12 +6,12 @@ spec:
   template:
     spec:
       containers:
-      - image: gcr.io/${PROJECT_ID}/competitor-analysis-frontend
+      - image: gcr.io/genai-strategy-class/competitor-analysis-frontend:latest
         ports:
         - containerPort: 5173
         env:
         - name: VITE_API_URL
-          value: https://competitor-analysis-backend-${PROJECT_ID}.a.run.app
+          value: https://competitor-analysis-backend-342114956303.us-central1.run.app
         resources:
           limits:
             cpu: "1"

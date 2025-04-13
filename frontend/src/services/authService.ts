@@ -11,20 +11,26 @@ class AuthService {
     static async login(username: string, password: string): Promise<boolean> {
         try {
             console.log('Login attempt with username:', username);
-            console.log('API URL:', API_CONFIG.BASE_URL);
 
             const formData = new URLSearchParams();
             formData.append('username', username);
             formData.append('password', password);
 
-            console.log('Making fetch request to:', `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.AUTH}`);
+            // Determine whether to use the proxy URL
+            const useProxy = !!API_CONFIG.PROXY_URL;
+            const baseUrl = useProxy ? API_CONFIG.PROXY_URL : API_CONFIG.BASE_URL;
 
-            const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.AUTH}`, {
+            // Build the URL - for proxy, token endpoint is already included in the path
+            const url = `${baseUrl}${useProxy ? '/token' : API_CONFIG.ENDPOINTS.AUTH}`;
+            console.log(`Making fetch request to: ${url} (using proxy: ${useProxy})`);
+
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 },
                 body: formData,
+                mode: 'cors',
             });
 
             console.log('Response status:', response.status);
@@ -41,6 +47,15 @@ class AuthService {
             return true;
         } catch (error) {
             console.error('Login error:', error);
+
+            // If it looks like a CORS error, provide a clearer message
+            if (error instanceof Error && error.message.includes('Failed to fetch')) {
+                console.error('This appears to be a CORS issue. Try these solutions:');
+                console.error('1. Install a CORS browser extension (for development only)');
+                console.error('2. Configure the backend to allow requests from this origin');
+                console.error('3. Use a server-side proxy instead of client-side requests');
+            }
+
             return false;
         }
     }
