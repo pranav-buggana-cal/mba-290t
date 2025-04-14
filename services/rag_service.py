@@ -35,7 +35,7 @@ class RAGService:
                 self.prompts = {}
 
                 # Split by template headers (# followed by a name)
-                # This regex finds all sections that start with # and captures the section name
+                # This regex matches # at the start of a line followed by text
                 sections = re.split(r"(?=^# .*$)", content, flags=re.MULTILINE)
                 # Remove empty sections at the beginning
                 sections = [s for s in sections if s.strip()]
@@ -50,9 +50,7 @@ class RAGService:
 
                     first_line = lines[0].strip()
                     if not first_line.startswith("# "):
-                        logger.warning(
-                            f"Skipping section with invalid header: {first_line[:30]}..."
-                        )
+                        logger.warning(f"Invalid header: {first_line[:30]}...")
                         continue
 
                     name = first_line[2:].strip()  # Remove '# ' prefix
@@ -65,33 +63,46 @@ class RAGService:
                     )
                     logger.info(f"Template preview: {template[:200]}...")
 
-                    # Verify template contains all required markers
+                    # For competitor analysis template, verify critical sections exist
                     if name == "Competitor Analysis Template":
-                        # Check for key markers that should be in the template
-                        required_markers = ["{query}", "Your analysis should include"]
-                        missing_markers = []
+                        # Ensure required markers are present
+                        required_markers = [
+                            "{query}",
+                            "Your analysis should include",
+                            "Executive Summary",
+                            "Industry Analysis",
+                        ]
+
                         for marker in required_markers:
                             if marker not in template:
-                                missing_markers.append(marker)
-                                logger.warning(
-                                    f"Template missing required marker: {marker}"
+                                logger.error(
+                                    f"Template missing critical marker: {marker}"
                                 )
-
-                        if missing_markers:
-                            logger.error(
-                                f"Template is missing critical markers: {missing_markers}"
-                            )
+                                # Fix: Reload the template from the original file
+                                logger.info("Attempting to fix template...")
+                                with open(prompts_path, "r") as fix_file:
+                                    fix_content = fix_file.read()
+                                    if marker in fix_content:
+                                        logger.info(
+                                            f"Marker '{marker}' found in original file"
+                                        )
+                                        # Extract the complete template directly
+                                        match = re.search(
+                                            r"^# Competitor Analysis Template$(.*?)(?=^# |\Z)",
+                                            fix_content,
+                                            re.MULTILINE | re.DOTALL,
+                                        )
+                                        if match:
+                                            template = match.group(1).strip()
+                                            logger.info(
+                                                "Template fixed from original file"
+                                            )
+                                        else:
+                                            logger.error(
+                                                "Failed to extract template from original file"
+                                            )
 
                     self.prompts[name] = template
-
-                # Validate we have the necessary templates
-                required_templates = [
-                    "Competitor Analysis Template",
-                    "Document Processing Template",
-                ]
-                for template_name in required_templates:
-                    if template_name not in self.prompts:
-                        logger.error(f"Missing required template: {template_name}")
 
                 logger.info(f"Successfully loaded {len(self.prompts)} templates")
 
@@ -234,7 +245,7 @@ class RAGService:
     async def generate_analysis(
         self, query: str, context: Tuple[List[Dict], List[Dict]]
     ) -> str:
-        """Generate analysis using RAG with separate competitor and business contexts."""
+        """Generate analysis using RAG."""
         try:
             competitor_docs, business_docs = context
 
@@ -244,67 +255,86 @@ class RAGService:
 
             total_length = len(competitor_text) + len(business_text)
             logger.info(f"Generating analysis with context length: {total_length}")
-            logger.info(
-                f"Competitor context: {len(competitor_text)} chars, Business context: {len(business_text)} chars"
-            )
 
-            # Log the template info
-            template_key = "Competitor Analysis Template"
-            template = self.prompts[template_key]
-            logger.info(f"Template key: {template_key}")
+            # Get the template directly from the file to avoid any potential truncation
+            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            prompts_path = os.path.join(current_dir, "prompts", "template_prompts.txt")
+
+            try:
+                with open(prompts_path, "r") as f:
+                    content = f.read()
+                    # Extract the competitor analysis template directly from the file
+                    match = re.search(
+                        r"^# Competitor Analysis Template$(.*?)(?=^# |\Z)",
+                        content,
+                        re.MULTILINE | re.DOTALL,
+                    )
+                    if match:
+                        fresh_template = match.group(1).strip()
+                        logger.info(
+                            f"Loaded fresh template with {len(fresh_template)} chars"
+                        )
+                        template = fresh_template
+                    else:
+                        # Fall back to the cached template
+                        template_key = "Competitor Analysis Template"
+                        template = self.prompts[template_key]
+                        logger.warning("Using cached template as fallback")
+            except Exception as e:
+                logger.warning(
+                    f"Error loading fresh template: {e}, using cached version"
+                )
+                template_key = "Competitor Analysis Template"
+                template = self.prompts[template_key]
+
             logger.info(f"Template length: {len(template)} chars")
-            logger.info(f"Template preview: {template[:500]}...")
-
-            # Check if the template includes the required format keys
-            # Detect all format keys in the template using regex
-            format_keys = re.findall(r"{(\w+)}", template)
-            logger.info(f"Detected format keys in template: {format_keys}")
-
-            # Format parameters dictionary
-            format_params = {
-                "query": query,
-                "context": competitor_text,
-            }
-
-            # Add business_context if it's expected in the template
-            if "business_context" in format_keys:
-                format_params["business_context"] = business_text
-                logger.info("Added business_context to format parameters")
+            logger.info(f"Template preview: {template[:300]}...")
+            logger.info(f"Template middle part: {template[300:600]}...")
+            logger.info(f"Template end part: {template[-300:]}...")
 
             # Format the template with the provided values
             try:
-                prompt = template.format(**format_params)
-                logger.info("Template formatting successful")
-            except KeyError as e:
-                logger.error(f"Template formatting failed: missing key {e}")
-                # Fall back to basic formatting
+                # Final verification of template integrity
+                if "Your analysis should include all of the following" in template:
+                    start_idx = template.find(
+                        "Your analysis should include all of the following"
+                    )
+                    section_requirements = template[start_idx : start_idx + 800]
+                    logger.info(f"Section requirements: {section_requirements}")
+
+                # Format the template
                 prompt = template.format(
                     query=query,
-                    context=f"# Competitor Information\n{competitor_text}\n\n# Business Information\n{business_text}",
+                    context=competitor_text,
                 )
-                logger.info("Used fallback formatting")
+                logger.info("Template formatting successful")
 
-            # Log the final prompt
-            logger.info(f"Final prompt length: {len(prompt)} chars")
-            logger.info(f"Prompt query: {query}")
-            logger.info(f"Prompt preview (first 500 chars): {prompt[:500]}...")
-            logger.info(
-                f"Prompt end (last 500 chars): {prompt[-500:] if len(prompt) > 500 else prompt}"
-            )
+            except Exception as e:
+                logger.error(f"Template formatting failed: {e}")
+                # Fall back to basic formatting
+                prompt = (
+                    f"You are a strategic business analyst. Based on the provided context about competitors "
+                    f"and the specific query, provide a detailed competitive analysis and strategic recommendations.\n\n"
+                    f"User's query: {query}\n\n"
+                    f"Competitor context:\n{competitor_text}\n\n"
+                    f"Generate a comprehensive analysis with these sections:\n"
+                    f"1. Executive Summary\n"
+                    f"2. List of Top Competitors\n"
+                    f"3. Industry Analysis\n"
+                    f"4. Market Positioning\n"
+                    f"5. Competitive Analysis\n"
+                    f"6. Strategic Recommendations\n"
+                    f"7. Risk Assessment\n"
+                )
+                logger.info("Used simplified fallback template")
 
             # Generate the analysis
             analysis = self.openai_service.generate_completion(prompt)
             logger.info(f"Generated analysis of length: {len(analysis)}")
 
-            # Clear the vector database after analysis is complete
-            # await self.clear_vector_db()
-
             return analysis
         except Exception as e:
             logger.error(f"Error generating analysis: {str(e)}")
-            logger.error(
-                f"Template keys: {format_keys if 'format_keys' in locals() else 'unknown'}"
-            )
             raise
 
     def _chunk_text(self, text: str) -> List[str]:

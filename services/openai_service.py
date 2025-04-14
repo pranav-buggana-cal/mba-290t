@@ -43,20 +43,37 @@ class OpenAIService:
             logger.info(f"Requesting completion for prompt: {prompt[:100]}...")
             logger.info(f"Total prompt length: {len(prompt)} characters")
 
-            # Log the important parts of the prompt
-            prompt_parts = prompt.split("\n\n")
-            logger.info(f"Prompt has {len(prompt_parts)} sections")
+            # Debug: Check for template integrity
+            required_sections = [
+                "Executive Summary",
+                "List of Top Competitors",
+                "Industry Analysis",
+                "Market Positioning",
+                "Competitive Analysis",
+                "Strategic Recommendations",
+                "Risk Assessment",
+            ]
 
-            # Check if template sections are included
-            if "Your analysis should include all of the following:" in prompt:
-                logger.info("Template sections found in prompt")
-                section_index = prompt.find(
-                    "Your analysis should include all of the following:"
-                )
-                section_content = prompt[section_index : section_index + 500]
-                logger.info(f"Template sections: {section_content}...")
+            # Log template integrity check
+            section_check = []
+            for section in required_sections:
+                found = section in prompt
+                section_check.append(f"{section}: {'FOUND' if found else 'MISSING'}")
+
+            logger.info("Template section check: " + ", ".join(section_check))
+
+            # Print the part of the prompt that should contain section requirements
+            directive_marker = "Your analysis should include all of the following"
+            if directive_marker in prompt:
+                start_idx = prompt.find(directive_marker)
+                end_idx = prompt.find("Ensure your analysis is thorough", start_idx)
+                if end_idx == -1:  # If not found, just take the next 500 chars
+                    end_idx = min(start_idx + 500, len(prompt))
+
+                sections_text = prompt[start_idx:end_idx]
+                logger.info(f"SECTIONS TEXT: {sections_text}")
             else:
-                logger.info("WARNING: Template sections not found in prompt")
+                logger.warning("Directive marker not found in prompt!")
 
             response = self.client.chat.completions.create(
                 model="gpt-4-turbo-preview",
@@ -66,6 +83,7 @@ class OpenAIService:
                         "content": (
                             "You are a helpful assistant specializing in"
                             " competitor analysis and strategic business consulting."
+                            " Always include all the requested sections in your analysis."
                         ),
                     },
                     {"role": "user", "content": prompt},

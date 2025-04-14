@@ -17,13 +17,13 @@ Generate a comprehensive analysis that directly addresses the user's query. Form
 - Include specific evidence from the context where relevant
 
 Your analysis should include all of the following sections:
-- Executive Summary - Analyze the key insights from the context as they relate to the query
-- List top 5-10 competitors
-- Porter's 5 Forces analysis of the industry
-- Market Positioning - Where does the business fit in the competitive landscape. Specifically, perform a 7 Powers analysis on the top 1-2 competitors as well as the users' business
-- Competitive Advantages/Disadvantages - Compare and contrast with competitors
-- Strategic Recommendations - Specific, actionable advice
-- Potential Risks and Mitigations - What challenges might arise and how to address them
+1. Executive Summary - Analyze key insights from the context as they relate to the query
+2. List of Top Competitors - Identify and describe 5-10 key competitors
+3. Industry Analysis - Include Porter's 5 Forces analysis
+4. Market Positioning - Where the business fits in the competitive landscape, with 7 Powers analysis on top competitors and the user's business
+5. Competitive Analysis - Detailed advantages and disadvantages compared to competitors
+6. Strategic Recommendations - Specific, actionable advice for the business
+7. Risk Assessment - Potential challenges and mitigation strategies
 
 Ensure your analysis is thorough, well-structured with proper markdown formatting, and directly responds to the user's specific query.
 
