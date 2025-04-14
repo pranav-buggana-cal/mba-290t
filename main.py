@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from services.auth_service import (
     authenticate_user,
@@ -10,18 +10,23 @@ from services.auth_service import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from services.rate_limiter import rate_limiter
-from datetime import timedelta
+from datetime import timedelta, datetime
 import os
-from typing import List
+from typing import List, Dict, Any
 import logging
 from services.rag_service import RAGService
 from services.doc_generation_service import DocGenerationService
+from pydantic import BaseModel
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Competitor Analysis RAG System")
+app = FastAPI(
+    title="Competitor Analysis RAG System",
+    # Configure maximum upload size to 200MB
+    max_upload_size=200 * 1024 * 1024,  # 200MB in bytes
+)
 
 # Create output directory if it doesn't exist
 os.makedirs("output", exist_ok=True)
@@ -42,6 +47,20 @@ app.add_middleware(
 
 rag_service = RAGService()
 doc_service = DocGenerationService()
+
+
+# Models
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: str
+
+
+class SuccessResponse(BaseModel):
+    message: str
 
 
 # Global authentication middleware
@@ -140,33 +159,90 @@ async def download_file(
     )
 
 
-@app.post("/analyze-competitors")
-async def analyze_competitors(
-    query: str, current_user: dict = Depends(get_current_active_user)
-):
-    """Generate competitor analysis based on stored documents."""
+@app.post("/upload-competitor", response_model=SuccessResponse)
+async def upload_competitor(file: UploadFile = File(...)):
+    """Upload a competitor document for analysis."""
     try:
-        logger.info(f"Received analysis query: {query}")
-        context = await rag_service.get_relevant_context(query)
-        logger.info(f"Retrieved {len(context)} relevant contexts")
-
-        analysis = await rag_service.generate_analysis(query, context)
-        logger.info("Generated analysis")
-
-        doc_path = await doc_service.create_analysis_document(analysis)
-        filename = os.path.basename(doc_path)
-        download_url = f"/download/{filename}"
-
-        logger.info(f"Created document at: {doc_path}")
-
-        return {
-            "message": "Analysis completed",
-            "document_path": download_url,
-            "summary": analysis[:500] + "...",
-        }
+        file_content = await file.read()
+        await rag_service.process_document(
+            file_content, file.filename, file_type="competitor"
+        )
+        return {"message": "Competitor document uploaded successfully"}
     except Exception as e:
-        logger.error(f"Error analyzing competitors: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error uploading competitor document: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error uploading document: {str(e)}"
+        )
+
+
+@app.post("/upload-business", response_model=SuccessResponse)
+async def upload_business(file: UploadFile = File(...)):
+    """Upload a business document for analysis."""
+    try:
+        file_content = await file.read()
+        await rag_service.process_document(
+            file_content, file.filename, file_type="business"
+        )
+        return {"message": "Business document uploaded successfully"}
+    except Exception as e:
+        logger.error(f"Error uploading business document: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error uploading document: {str(e)}"
+        )
+
+
+@app.post("/analyze-competitors", response_model=Dict[str, Any])
+async def analyze_competitors(query: str):
+    """Generate a competitor analysis based on the provided query."""
+    try:
+        logger.info(f"Received analyze-competitors request with query: {query}")
+
+        # Get relevant context separately for competitors and business
+        context = await rag_service.get_relevant_context(query)
+
+        # Generate the analysis using the context
+        logger.info("Generating analysis...")
+        analysis = await rag_service.generate_analysis(query, context)
+
+        # Log analysis length and first 100 chars
+        logger.info(f"Analysis generated. Length: {len(analysis)} chars")
+        logger.info(f"Analysis preview: {analysis[:100]}...")
+
+        # Create a timestamped document with the analysis
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        doc_path = f"output/{timestamp}_analysis.md"
+        os.makedirs("output", exist_ok=True)
+
+        with open(doc_path, "w") as f:
+            f.write(analysis)
+
+        # Create a summary (first 1000 chars if analysis is long)
+        summary = analysis[:1000] + "..." if len(analysis) > 1000 else analysis
+
+        # Return the response with the complete analysis
+        response_data = {
+            "message": "Analysis generated successfully",
+            "doc_path": doc_path,
+            "summary": summary,
+            "analysis": analysis,  # Include the full analysis in the response
+        }
+
+        # Clear the vector database after successful analysis
+        try:
+            logger.info("Clearing vector database after analysis...")
+            await rag_service.clear_vector_db()
+            logger.info("Vector database cleared successfully")
+        except Exception as e:
+            logger.warning(f"Failed to clear vector database: {str(e)}")
+            # Don't fail the request if clearing fails
+
+        # Use a custom JSONResponse to ensure no truncation
+        return JSONResponse(content=response_data, status_code=200)
+    except Exception as e:
+        logger.error(f"Error generating analysis: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error generating analysis: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

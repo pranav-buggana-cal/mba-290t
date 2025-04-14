@@ -1,5 +1,5 @@
 // Force proxy flag set in vite.config.ts
-const FORCE_PROXY = import.meta.env.FORCE_PROXY === 'true';
+const FORCE_PROXY = import.meta.env.VITE_FORCE_PROXY === 'true';
 
 export const API_CONFIG = {
     BASE_URL: import.meta.env.VITE_API_URL || 'http://localhost:8000',

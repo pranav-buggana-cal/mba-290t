@@ -1,31 +1,84 @@
-import { useState, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { API_CONFIG, getApiUrl } from '../config/api';
 import AuthService from '../services/authService';
-import { CloudArrowUpIcon } from '@heroicons/react/24/outline';
+import FileUploadBox from './FileUploadBox';
+import { ArrowUpTrayIcon } from '@heroicons/react/24/outline';
+import { useDocumentContext } from '../context/DocumentContext';
 
 export default function DocumentUpload() {
-  const [files, setFiles] = useState<FileList | null>(null);
+  const [competitorFiles, setCompetitorFiles] = useState<File[]>([]);
+  const [businessFiles, setBusinessFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-  const [debug, setDebug] = useState<string>('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Use the document context
+  const {
+    setHasCompetitorFiles,
+    setHasBusinessFiles
+  } = useDocumentContext();
+
+  // Track if files have been successfully uploaded to the server
+  const [filesUploadedToServer, setFilesUploadedToServer] = useState({
+    competitor: false,
+    business: false
+  });
+
+  // Determine if both file sections have at least one file
+  const hasAllRequiredFiles = competitorFiles.length > 0 && businessFiles.length > 0;
+
+  // Update context when files change, but don't set to false if files were uploaded to server
+  useEffect(() => {
+    // Only update if we have files OR if no files have been uploaded to server yet
+    if (competitorFiles.length > 0 || !filesUploadedToServer.competitor) {
+      setHasCompetitorFiles(competitorFiles.length > 0);
+    }
+  }, [competitorFiles, setHasCompetitorFiles, filesUploadedToServer.competitor]);
+
+  useEffect(() => {
+    // Only update if we have files OR if no files have been uploaded to server yet
+    if (businessFiles.length > 0 || !filesUploadedToServer.business) {
+      setHasBusinessFiles(businessFiles.length > 0);
+    }
+  }, [businessFiles, setHasBusinessFiles, filesUploadedToServer.business]);
+
+  // Handle competitor files selection
+  const handleCompetitorFilesSelected = (files: File[]) => {
+    setCompetitorFiles(files);
+    setHasCompetitorFiles(files.length > 0);
+    // Reset the uploaded to server flag when new files are selected
+    if (files.length > 0) {
+      setFilesUploadedToServer(prev => ({ ...prev, competitor: false }));
+    }
+  };
+
+  // Handle business files selection
+  const handleBusinessFilesSelected = (files: File[]) => {
+    setBusinessFiles(files);
+    setHasBusinessFiles(files.length > 0);
+    // Reset the uploaded to server flag when new files are selected
+    if (files.length > 0) {
+      setFilesUploadedToServer(prev => ({ ...prev, business: false }));
+    }
+  };
 
   // Upload function that uses getApiUrl for consistent proxy usage
-  const uploadFile = async (file: File) => {
+  const uploadFile = async (file: File, fileType: 'competitor' | 'business') => {
     try {
       // Create a FormData with the file
       const formData = new FormData();
       formData.append('files', file);
+      // Add a type field to identify whether this is a competitor or business file
+      formData.append('file_type', fileType);
 
       // Debug: log the file being uploaded
       const debugInfo = `
         File name: ${file.name}
         File size: ${file.size} bytes
         File type: ${file.type}
+        File category: ${fileType}
         Last modified: ${new Date(file.lastModified).toISOString()}
       `;
       console.log(debugInfo);
-      setDebug(prev => prev + debugInfo);
 
       // Get token
       const token = AuthService.getToken();
@@ -37,194 +90,167 @@ export default function DocumentUpload() {
       const url = getApiUrl(API_CONFIG.ENDPOINTS.UPLOAD);
 
       console.log(`Uploading to URL: ${url}`);
-      setDebug(prev => prev + `\nUploading to URL: ${url}`);
       console.log(`Using token (truncated): ${token.substring(0, 15)}...`);
 
       // Use standard CORS mode with proper authorization
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          // Don't set Content-Type, let the browser set it with the boundary
-        },
-        body: formData,
-        mode: 'cors',
-      });
+      // Create controller with long timeout for large files
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
 
-      console.log('Response status:', response.status);
-      setDebug(prev => prev + `\nResponse status: ${response.status}`);
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            // Don't set Content-Type, let the browser set it with the boundary
+          },
+          body: formData,
+          mode: 'cors',
+          credentials: 'omit', // Change to 'omit' to avoid CORS preflight issues
+          signal: controller.signal
+        });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Upload failed:', errorText);
-        setDebug(prev => prev + `\nError: ${errorText}`);
-        throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+        // Clear the timeout
+        clearTimeout(timeoutId);
+
+        console.log('Response status:', response.status);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Upload failed:', errorText);
+
+          // If the token is expired, try to refresh it
+          if (response.status === 401) {
+            console.log('Authentication failed. Redirecting to login...');
+            // Force logout to redirect to login
+            AuthService.logout();
+            window.location.reload();
+            throw new Error('Authentication failed. Please log in again.');
+          }
+
+          throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        console.log('Upload success:', data);
+        return data;
+      } catch (e) {
+        // Clean up timeout if fetch throws
+        clearTimeout(timeoutId);
+        throw e;
+      }
+    } catch (error: any) {
+      // Special handling for aborted requests
+      if (error.name === 'AbortError') {
+        console.error('Upload timed out after 2 minutes');
+        throw new Error('Upload timed out. Please try a smaller file or check your connection.');
       }
 
-      const data = await response.json();
-      console.log('Upload success:', data);
-      setDebug(prev => prev + `\nSuccess: ${JSON.stringify(data)}`);
-      return data;
-    } catch (error: any) {
       console.error('Upload error:', error);
-      setDebug(prev => prev + `\nError caught: ${error.message}`);
       throw error;
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!files?.length) return;
+  const handleUploadAllFiles = async () => {
+    if (competitorFiles.length === 0 || businessFiles.length === 0) {
+      setMessage({
+        type: 'error',
+        text: 'Please select at least one file in each section before uploading.'
+      });
+      return;
+    }
 
     setUploading(true);
     setMessage(null);
-    setDebug('');
 
     try {
-      console.log("Files to upload:", files);
-      setDebug(prev => prev + `\nNumber of files: ${files.length}`);
+      // First upload competitor files
+      console.log("Competitor files to upload:", competitorFiles);
 
-      // Process each file
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        console.log(`Adding file ${i}: ${file.name} ${file.size} ${file.type}`);
-        setDebug(prev => prev + `\nAdding file ${i}: ${file.name} ${file.size} ${file.type}`);
+      for (let i = 0; i < competitorFiles.length; i++) {
+        const file = competitorFiles[i];
+        console.log(`Adding competitor file ${i}: ${file.name} ${file.size} ${file.type}`);
+        await uploadFile(file, 'competitor');
+      }
 
-        await uploadFile(file);
+      // Then upload business files
+      console.log("Business files to upload:", businessFiles);
+
+      for (let i = 0; i < businessFiles.length; i++) {
+        const file = businessFiles[i];
+        console.log(`Adding business file ${i}: ${file.name} ${file.size} ${file.type}`);
+        await uploadFile(file, 'business');
       }
 
       setMessage({
         type: 'success',
-        text: 'Files uploaded successfully!'
+        text: 'All files uploaded successfully!'
       });
 
-      // Reset file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      setFiles(null);
+      // Track that files have been uploaded to server
+      setFilesUploadedToServer({
+        competitor: true,
+        business: true
+      });
+
+      // Reset files after successful upload but keep the context values true
+      setCompetitorFiles([]);
+      setBusinessFiles([]);
+
+      // Explicitly set context values to true to ensure the Generate Analysis button is enabled
+      setHasCompetitorFiles(true);
+      setHasBusinessFiles(true);
     } catch (error: any) {
       console.error('Upload error:', error);
       setMessage({
         type: 'error',
-        text: `Failed to upload document: ${error.message}`
+        text: `Failed to upload files: ${error.message}`
       });
     } finally {
       setUploading(false);
     }
   };
 
-  const validateFile = (file: File) => {
-    // Check file type
-    const validExtensions = ['.pdf', '.docx', '.txt'];
-    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
-
-    // Check file size (10MB max)
-    const maxSize = 10 * 1024 * 1024; // 10MB in bytes
-
-    if (!validExtensions.includes(fileExtension)) {
-      return { valid: false, reason: `Invalid file type: ${fileExtension}. Only PDF, DOCX, and TXT files are supported.` };
-    }
-
-    if (file.size > maxSize) {
-      return { valid: false, reason: `File too large: ${Math.round(file.size / (1024 * 1024))}MB. Maximum size is 10MB.` };
-    }
-
-    return { valid: true };
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log('File input changed');
-    if (e.target.files && e.target.files.length > 0) {
-      console.log('Files selected:', e.target.files);
-
-      // Validate each file
-      const fileList = Array.from(e.target.files);
-      const invalidFiles = fileList
-        .map(file => ({ file, validation: validateFile(file) }))
-        .filter(item => !item.validation.valid);
-
-      if (invalidFiles.length > 0) {
-        const reasons = invalidFiles.map(item => `${item.file.name}: ${item.validation.reason}`);
-        setMessage({
-          type: 'error',
-          text: `Invalid file(s):\n${reasons.join('\n')}`
-        });
-        e.target.value = '';
-        return;
-      }
-
-      setFiles(e.target.files);
-      setMessage(null);
-      setDebug('');
-    } else {
-      console.log('No files selected');
-    }
-  };
-
   return (
-    <div className="bg-white shadow sm:rounded-lg">
-      <div className="px-4 py-5 sm:p-6">
-        <h3 className="text-lg font-medium leading-6 text-gray-900">Upload Documents</h3>
-        <div className="mt-2 max-w-xl text-sm text-gray-500">
-          <p>Upload competitor documents for analysis (PDF, DOCX, TXT)</p>
-        </div>
-        <form onSubmit={handleSubmit} className="mt-5">
-          <div className="flex items-center justify-center w-full">
-            <label className="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
-              <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                <CloudArrowUpIcon className="w-10 h-10 mb-3 text-gray-400" />
-                <p className="mb-2 text-sm text-gray-500">
-                  <span className="font-semibold">Click to upload</span> or drag and drop
-                </p>
-                <p className="text-xs text-gray-500">PDF, DOCX, TXT (MAX. 10MB)</p>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                multiple
-                accept=".pdf,.docx,.txt"
-                onChange={handleFileChange}
-              />
-            </label>
-          </div>
-          {files && files.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-sm font-medium text-gray-900">Selected files:</h4>
-              <ul className="mt-2 text-sm text-gray-500">
-                {Array.from(files).map((file, index) => (
-                  <li key={index}>{file.name} ({Math.round(file.size / 1024)} KB)</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div className="mt-5">
-            <button
-              type="submit"
-              disabled={uploading || !files?.length}
-              className={`inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white ${uploading || !files?.length
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
-                }`}
-            >
-              {uploading ? 'Uploading...' : 'Upload'}
-            </button>
-          </div>
-        </form>
-        {message && (
-          <div className={`mt-4 p-4 rounded-md ${message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-            }`}>
-            <pre className="whitespace-pre-wrap">{message.text}</pre>
-          </div>
-        )}
-        {debug && (
-          <div className="mt-4 p-4 rounded-md bg-gray-50">
-            <h4 className="text-sm font-medium text-gray-900 mb-2">Debug Output:</h4>
-            <pre className="whitespace-pre-wrap text-xs overflow-auto max-h-60 bg-gray-100 p-2 rounded">{debug}</pre>
-          </div>
-        )}
+    <div className="document-upload-container">
+      <FileUploadBox
+        title="Upload Competitor Research"
+        description="Upload PDF or text files that contain information about your competitors. For example, PDF of their landing page, slide decks, memos, articles, etc."
+        onFilesSelected={handleCompetitorFilesSelected}
+        themeColor="text-[#15284B]"
+        themeBackground="bg-[#EEEEEE]"
+        themeBorder="border-[#15284B]"
+      />
+
+      <FileUploadBox
+        title="Upload Context Around Your Business"
+        description="Upload PDF or text files that contain information about your business. For example, PDF of their landing page, slide decks, memos, articles, etc."
+        onFilesSelected={handleBusinessFilesSelected}
+        themeColor="text-[#FDB515]"
+        themeBackground="bg-[#EEEEEE]"
+        themeBorder="border-[#FDB515]"
+      />
+
+      {/* Single "Send to Model" button for both sections */}
+      <div className="unified-upload-container">
+        <button
+          onClick={handleUploadAllFiles}
+          disabled={!hasAllRequiredFiles || uploading}
+          className={`unified-submit-button ${hasAllRequiredFiles && !uploading
+            ? 'unified-button-enabled'
+            : 'unified-button-disabled'
+            }`}
+        >
+          {uploading ? 'Processing...' : 'Send to Model'}
+          <ArrowUpTrayIcon className="submit-icon" />
+        </button>
       </div>
+
+      {message && (
+        <div className={`upload-message ${message.type === 'success' ? 'upload-message-success' : 'upload-message-error'}`}>
+          <pre className="message-text">{message.text}</pre>
+        </div>
+      )}
     </div>
   );
 }

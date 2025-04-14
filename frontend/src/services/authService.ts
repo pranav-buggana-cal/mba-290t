@@ -20,9 +20,11 @@ class AuthService {
             const useProxy = !!API_CONFIG.PROXY_URL;
             const baseUrl = useProxy ? API_CONFIG.PROXY_URL : API_CONFIG.BASE_URL;
 
-            // Build the URL - for proxy, token endpoint is already included in the path
-            const url = `${baseUrl}${useProxy ? '/token' : API_CONFIG.ENDPOINTS.AUTH}`;
+            // Build the URL - use the normal token endpoint
+            const url = `${baseUrl}${API_CONFIG.ENDPOINTS.AUTH}`;
             console.log(`Making fetch request to: ${url} (using proxy: ${useProxy})`);
+            console.log('Request content-type:', 'application/x-www-form-urlencoded');
+            console.log('Request body (URL encoded):', formData.toString());
 
             const response = await fetch(url, {
                 method: 'POST',
@@ -31,9 +33,12 @@ class AuthService {
                 },
                 body: formData,
                 mode: 'cors',
+                // Set longer timeout for fetch
+                signal: AbortSignal.timeout(30000) // 30 seconds timeout
             });
 
             console.log('Response status:', response.status);
+            console.log('Response headers:', [...response.headers.entries()]);
 
             if (!response.ok) {
                 const errorText = await response.text();

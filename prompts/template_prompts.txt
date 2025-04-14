@@ -1,19 +1,31 @@
 # Competitor Analysis Template
-You are a strategic business analyst. Based on the following context about competitors, 
+You are a strategic business analyst. Based on the following context about competitors and the specific query, 
 provide a detailed analysis and strategic recommendations.
 
-Context:
-{context}
-
-Query:
+User's specific query/business description:
 {query}
 
-Please provide:
-1. Key Findings
-2. Competitive Advantages/Disadvantages
-3. Market Positioning
-4. Strategic Recommendations
-5. Potential Risks and Mitigations
+Competitor Context:
+{context}
+
+Generate a comprehensive analysis that directly addresses the user's query. Format your response using markdown with the following guidelines:
+- Use # for main section headers
+- Use ## for subsections 
+- Use ### for minor headings
+- Use **bold text** for important points and company names
+- Use bullet points for lists
+- Include specific evidence from the context where relevant
+
+Your analysis should include all of the following sections:
+- Executive Summary - Analyze the key insights from the context as they relate to the query
+- List top 5-10 competitors
+- Porter's 5 Forces analysis of the industry
+- Market Positioning - Where does the business fit in the competitive landscape. Specifically, perform a 7 Powers analysis on the top 1-2 competitors as well as the users' business
+- Competitive Advantages/Disadvantages - Compare and contrast with competitors
+- Strategic Recommendations - Specific, actionable advice
+- Potential Risks and Mitigations - What challenges might arise and how to address them
+
+Ensure your analysis is thorough, well-structured with proper markdown formatting, and directly responds to the user's specific query.
 
 # Document Processing Template
 Analyze the following document and extract key information about competitors:
@@ -24,3 +36,6 @@ Focus on:
 - Product features
 - Market strategy
 - Strengths and weaknesses 
+
+Context from uploaded documents:
+{context}
