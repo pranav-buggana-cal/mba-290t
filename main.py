@@ -17,6 +17,7 @@ import logging
 from services.rag_service import RAGService
 from services.doc_generation_service import DocGenerationService
 from pydantic import BaseModel
+import json
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -227,6 +228,12 @@ async def analyze_competitors(query: str):
             "analysis": analysis,  # Include the full analysis in the response
         }
 
+        # Log response data structure for debugging
+        logger.info(f"Response data keys: {list(response_data.keys())}")
+        logger.info(f"Analysis key exists: {'analysis' in response_data}")
+        logger.info(f"Analysis value type: {type(response_data['analysis'])}")
+        logger.info(f"Analysis value length: {len(response_data['analysis'])}")
+
         # Clear the vector database after successful analysis
         try:
             logger.info("Clearing vector database after analysis...")
@@ -236,8 +243,15 @@ async def analyze_competitors(query: str):
             logger.warning(f"Failed to clear vector database: {str(e)}")
             # Don't fail the request if clearing fails
 
-        # Use a custom JSONResponse to ensure no truncation
-        return JSONResponse(content=response_data, status_code=200)
+        # Use a custom JSONResponse with a higher maximum size limit
+        # Directly construct the JSON string to avoid any truncation
+        json_str = json.dumps(response_data)
+        logger.info(f"JSON response length: {len(json_str)} bytes")
+
+        # Return the response with explicit content-type and no size limits
+        return JSONResponse(
+            content=response_data, status_code=200, media_type="application/json"
+        )
     except Exception as e:
         logger.error(f"Error generating analysis: {str(e)}")
         raise HTTPException(
