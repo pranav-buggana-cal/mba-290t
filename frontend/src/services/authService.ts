@@ -1,4 +1,4 @@
-import { API_CONFIG } from '../config/api';
+import { API_CONFIG, getApiUrl } from '../config/api';
 
 interface LoginResponse {
     access_token: string;
@@ -16,15 +16,10 @@ class AuthService {
             formData.append('username', username);
             formData.append('password', password);
 
-            // Determine whether to use the proxy URL
-            const useProxy = !!API_CONFIG.PROXY_URL;
-            const baseUrl = useProxy ? API_CONFIG.PROXY_URL : API_CONFIG.BASE_URL;
-
-            // Build the URL - use the normal token endpoint
-            const url = `${baseUrl}${API_CONFIG.ENDPOINTS.AUTH}`;
-            console.log(`Making fetch request to: ${url} (using proxy: ${useProxy})`);
+            // Use the getApiUrl helper to ensure consistent URL handling
+            const url = getApiUrl(API_CONFIG.ENDPOINTS.AUTH);
+            console.log(`Making fetch request to: ${url}`);
             console.log('Request content-type:', 'application/x-www-form-urlencoded');
-            console.log('Request body (URL encoded):', formData.toString());
 
             const response = await fetch(url, {
                 method: 'POST',
@@ -56,9 +51,9 @@ class AuthService {
             // If it looks like a CORS error, provide a clearer message
             if (error instanceof Error && error.message.includes('Failed to fetch')) {
                 console.error('This appears to be a CORS issue. Try these solutions:');
-                console.error('1. Install a CORS browser extension (for development only)');
-                console.error('2. Configure the backend to allow requests from this origin');
-                console.error('3. Use a server-side proxy instead of client-side requests');
+                console.error('1. Make sure the proxy server is running');
+                console.error('2. Check if VITE_FORCE_PROXY=true is set in .env');
+                console.error('3. Ensure the backend server is accessible');
             }
 
             return false;

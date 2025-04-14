@@ -111,6 +111,8 @@ export default function CompetitorAnalysis() {
         responseType: 'json',
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
+        // Add longer timeout (5 minutes) for analysis requests
+        timeout: 300000,
         transformResponse: [(data) => {
           // Ensure data is properly parsed without size limits
           if (typeof data === 'string') {

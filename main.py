@@ -10,11 +10,14 @@ from services.auth_service import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from services.rate_limiter import rate_limiter
+from services.storage_service import storage_service
 from datetime import timedelta, datetime
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 from services.rag_service import RAGService
+from services.openai_service import OpenAIService
+from db.vector_db import VectorDB
 from services.doc_generation_service import DocGenerationService
 from pydantic import BaseModel
 import json
@@ -32,13 +35,18 @@ app = FastAPI(
 # Create output directory if it doesn't exist
 os.makedirs("output", exist_ok=True)
 
+# Create directory for LangChain vector store
+os.makedirs("db/langchain_chroma", exist_ok=True)
+
 # Mount the output directory
 app.mount("/output", StaticFiles(directory="output"), name="output")
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(
+    allow_origins=os.getenv(
+        "CORS_ORIGINS", "http://localhost:5173,http://localhost:3001"
+    ).split(
         ","
     ),  # Allow both local and production URLs
     allow_credentials=True,
@@ -46,7 +54,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-rag_service = RAGService()
+# Initialize services
+openai_service = OpenAIService()
+vector_db = VectorDB()
+rag_service = RAGService(openai_service, vector_db)
 doc_service = DocGenerationService()
 
 
@@ -64,11 +75,40 @@ class SuccessResponse(BaseModel):
     message: str
 
 
+# Storage models
+class GetUploadUrlRequest(BaseModel):
+    fileName: str
+    contentType: str
+    size: int
+
+
+class GetUploadUrlResponse(BaseModel):
+    uploadUrl: str
+    fileId: str
+    expiresAt: int
+
+
+class CompleteUploadRequest(BaseModel):
+    fileId: str
+    fileType: str
+    storagePath: Optional[str] = None
+    contentType: Optional[str] = None
+
+
+class CompleteUploadResponse(BaseModel):
+    success: bool
+    message: str
+    fileDetails: Dict[str, Any]
+
+
 # Global authentication middleware
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    # Skip authentication for these paths
-    if request.url.path in ["/token", "/docs", "/openapi.json"]:
+    # Skip authentication for these paths and OPTIONS requests
+    if (
+        request.url.path in ["/token", "/docs", "/openapi.json", "/health"]
+        or request.method == "OPTIONS"
+    ):
         return await call_next(request)
 
     # Check for Authorization header
@@ -85,14 +125,31 @@ async def auth_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
-    if request.url.path not in [
-        "/docs",
-        "/openapi.json",
-        "/token",
-    ]:  # Don't rate limit docs and login
-        await rate_limiter.check_rate_limit(request)
+    # Skip rate limiting for these paths and OPTIONS requests
+    if (
+        request.url.path
+        in [
+            "/docs",
+            "/openapi.json",
+            "/token",
+            "/health",
+            "/storage/get-upload-url",
+            "/storage/complete-upload",
+        ]
+        or request.method == "OPTIONS"
+    ):
+        return await call_next(request)
+
+    # For all other paths, apply rate limiting
+    await rate_limiter.check_rate_limit(request)
     response = await call_next(request)
     return response
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for the API."""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 
 @app.post("/token")
@@ -119,24 +176,194 @@ async def root(current_user: dict = Depends(get_current_active_user)):
         "endpoints": {
             "/token": "POST - Login to get access token",
             "/upload-documents": "POST - Upload competitor documents for analysis",
+            "/storage/get-upload-url": "POST - Get signed URL for large file uploads",
+            "/storage/complete-upload": "POST - Complete a large file upload",
             "/analyze-competitors": "POST - Generate competitor analysis",
             "/docs": "GET - View API documentation",
         },
     }
 
 
+# New storage endpoints for large file uploads
+@app.post("/storage/get-upload-url", response_model=GetUploadUrlResponse)
+async def get_upload_url(
+    request: GetUploadUrlRequest, current_user: dict = Depends(get_current_active_user)
+):
+    """
+    Get a signed URL for uploading a large file directly to storage.
+
+    This endpoint generates a temporary signed URL that the client can use
+    to upload a file directly to the storage service without going through the API.
+    """
+    try:
+        log_msg = (
+            f"Getting upload URL for file: {request.fileName} ({request.size} bytes)"
+        )
+        logger.info(log_msg)
+
+        # Validate request
+        if not request.fileName:
+            raise HTTPException(status_code=400, detail="File name is required")
+
+        if not request.contentType:
+            raise HTTPException(status_code=400, detail="Content type is required")
+
+        # Validate file size
+        max_size = 150 * 1024 * 1024  # 150MB
+        if request.size <= 0:
+            raise HTTPException(
+                status_code=400, detail="File size must be greater than 0"
+            )
+
+        if request.size > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"File size exceeds maximum allowed size of "
+                    f"{max_size // (1024 * 1024)}MB"
+                ),
+            )
+
+        # Generate signed URL
+        try:
+            result = storage_service.get_upload_url(
+                file_name=request.fileName,
+                content_type=request.contentType,
+                file_size=request.size,
+            )
+
+            logger.info(f"Generated upload URL for file: {request.fileName}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error generating upload URL: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to generate upload URL: {str(e)}"
+            )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions without modification
+        raise
+    except Exception as e:
+        logger.error(f"Unhandled error generating upload URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/storage/complete-upload", response_model=CompleteUploadResponse)
+async def complete_upload(
+    request: CompleteUploadRequest,
+    current_user: dict = Depends(get_current_active_user),
+):
+    """
+    Complete an upload process by processing a file that was uploaded to storage.
+
+    After a client has uploaded a file to storage using a signed URL, this endpoint
+    should be called to verify the upload and process the file.
+    """
+    try:
+        log_msg = (
+            f"Completing upload for file ID: {request.fileId}, type: {request.fileType}"
+        )
+        logger.info(log_msg)
+
+        if not request.fileId:
+            raise HTTPException(status_code=400, detail="File ID is required")
+
+        if request.fileType not in ["competitor", "business"]:
+            error_msg = (
+                f"Invalid file type: {request.fileType}. "
+                f"Must be 'competitor' or 'business'."
+            )
+            logger.error(error_msg)
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        # Verify the file exists in storage
+        try:
+            file_details = storage_service.complete_upload(
+                file_id=request.fileId, storage_path=request.storagePath
+            )
+        except HTTPException as e:
+            logger.error(f"Storage error: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error accessing storage: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to verify file in storage: {str(e)}"
+            )
+
+        # Download the file from storage
+        try:
+            file_content = storage_service.download_file(
+                file_id=request.fileId, storage_path=request.storagePath
+            )
+        except HTTPException as e:
+            logger.error(f"Download error: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error downloading file: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to download file from storage: {str(e)}",
+            )
+
+        # Process the file based on its type
+        try:
+            filename = file_details.get("name", f"{request.fileId}")
+            # Pass the content type if provided
+            content_type = request.contentType or file_details.get("contentType", "")
+            process_result = await rag_service.process_document(
+                file_content,
+                filename,
+                file_type=request.fileType,
+                content_type=content_type,
+            )
+
+            # Include processing details in the response
+            processing_details = {
+                "total_chunks": process_result.get("total_chunks", 0),
+                "processed_chunks": process_result.get("processed_chunks", 0),
+                "processing_status": process_result.get("status", "success"),
+            }
+        except Exception as e:
+            logger.error(f"Error processing document: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to process document: {str(e)}"
+            )
+
+        logger.info(
+            f"Successfully completed upload and processing for {request.fileId}"
+        )
+        return {
+            "success": True,
+            "message": (
+                f"{request.fileType.capitalize()} document processed successfully"
+            ),
+            "fileDetails": file_details,
+            "processingDetails": processing_details,
+        }
+    except HTTPException:
+        # Re-raise HTTP exceptions without modification
+        raise
+    except Exception as e:
+        logger.error(f"Error completing upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/upload-documents")
 async def upload_documents(
     files: List[UploadFile] = File(...),
+    file_type: str = "competitor",
     current_user: dict = Depends(get_current_active_user),
 ):
     """Upload and process documents into the vector database."""
     try:
-        logger.info(f"Received {len(files)} files")
+        logger.info(f"Received {len(files)} files of type: {file_type}")
         for file in files:
             logger.info(f"Processing file: {file.filename}")
             content = await file.read()
-            await rag_service.process_document(content, file.filename)
+            await rag_service.process_document(
+                content, file.filename, file_type=file_type
+            )
         return {"message": "Documents processed successfully"}
     except Exception as e:
         logger.error(f"Error processing documents: {str(e)}")

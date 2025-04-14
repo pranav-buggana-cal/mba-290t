@@ -3,40 +3,69 @@ import { CloudArrowUpIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { DocumentTextIcon } from '@heroicons/react/24/solid';
 
 interface FileUploadBoxProps {
-    title: string;
-    description: string;
+    title?: string;
+    description?: string;
     onFilesSelected: (files: File[]) => void;
-    themeColor: string;
-    themeBackground: string;
-    themeBorder: string;
+    selectedFiles?: File[];
+    maxSizeMB?: number;
+    acceptedFileTypes?: string[];
+    acceptedExtensions?: string[];
+    disabled?: boolean;
+    themeColor?: string;
+    themeBackground?: string;
+    themeBorder?: string;
 }
 
 export default function FileUploadBox({
     title,
     description,
     onFilesSelected,
-    themeColor,
-    themeBackground,
-    themeBorder
+    selectedFiles: externalSelectedFiles,
+    maxSizeMB = 150,
+    acceptedFileTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'],
+    acceptedExtensions = ['.pdf', '.docx', '.txt'],
+    disabled = false,
+    themeColor = 'text-blue-600',
+    themeBackground = 'bg-gray-100',
+    themeBorder = 'border-gray-300'
 }: FileUploadBoxProps) {
-    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+    // Use internal state only if external state is not provided
+    const [internalSelectedFiles, setInternalSelectedFiles] = useState<File[]>([]);
+    const selectedFiles = externalSelectedFiles || internalSelectedFiles;
+
     const [error, setError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const validateFile = (file: File) => {
-        // Check file type
-        const validExtensions = ['.pdf', '.docx', '.txt'];
+        // Check file extension
         const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+        const isValidExtension = acceptedExtensions.includes(fileExtension);
 
-        // Check file size (200MB max)
-        const maxSize = 200 * 1024 * 1024; // 200MB in bytes
+        // Check file type (MIME type)
+        const isValidType = acceptedFileTypes.some(type => file.type.toLowerCase().includes(type.toLowerCase()));
 
-        if (!validExtensions.includes(fileExtension)) {
-            return { valid: false, reason: `Invalid file type: ${fileExtension}. Only PDF, DOCX, and TXT files are supported.` };
+        // Check file size
+        const maxSize = maxSizeMB * 1024 * 1024; // Convert MB to bytes
+
+        if (!isValidExtension) {
+            return {
+                valid: false,
+                reason: `Invalid file type: ${fileExtension}. Only PDF, DOCX, and TXT files are supported.`
+            };
+        }
+
+        if (!isValidType && file.type !== '') {
+            return {
+                valid: false,
+                reason: `Invalid file type: ${file.type}. Please upload a supported format.`
+            };
         }
 
         if (file.size > maxSize) {
-            return { valid: false, reason: `File too large: ${Math.round(file.size / (1024 * 1024))}MB. Maximum size is 200MB.` };
+            return {
+                valid: false,
+                reason: `File too large: ${Math.round(file.size / (1024 * 1024))}MB. Maximum size is ${maxSizeMB}MB.`
+            };
         }
 
         return { valid: true };
@@ -60,7 +89,13 @@ export default function FileUploadBox({
 
             // Add new files to existing files
             const newFiles = [...selectedFiles, ...fileList];
-            setSelectedFiles(newFiles);
+
+            // Update internal state if we're managing it
+            if (!externalSelectedFiles) {
+                setInternalSelectedFiles(newFiles);
+            }
+
+            // Notify parent component
             onFilesSelected(newFiles);
 
             // Reset file input
@@ -72,6 +107,8 @@ export default function FileUploadBox({
 
     const handleDrop = (e: React.DragEvent<HTMLButtonElement | HTMLDivElement>) => {
         e.preventDefault();
+
+        if (disabled) return;
 
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const fileList = Array.from(e.dataTransfer.files);
@@ -89,7 +126,13 @@ export default function FileUploadBox({
 
             // Add new files to existing files
             const newFiles = [...selectedFiles, ...fileList];
-            setSelectedFiles(newFiles);
+
+            // Update internal state if we're managing it
+            if (!externalSelectedFiles) {
+                setInternalSelectedFiles(newFiles);
+            }
+
+            // Notify parent component
             onFilesSelected(newFiles);
         }
     };
@@ -100,7 +143,13 @@ export default function FileUploadBox({
 
     const removeFile = (index: number) => {
         const updatedFiles = selectedFiles.filter((_, i) => i !== index);
-        setSelectedFiles(updatedFiles);
+
+        // Update internal state if we're managing it
+        if (!externalSelectedFiles) {
+            setInternalSelectedFiles(updatedFiles);
+        }
+
+        // Notify parent component
         onFilesSelected(updatedFiles);
     };
 
@@ -112,7 +161,7 @@ export default function FileUploadBox({
     };
 
     return (
-        <div className={`upload-box-container ${themeBorder}`}>
+        <div className={`upload-box-container ${themeBorder} ${disabled ? 'upload-box-disabled' : ''}`}>
             <div className="upload-box-content">
                 {/* Left column - Title and description */}
                 <div className="upload-box-info">
@@ -126,15 +175,19 @@ export default function FileUploadBox({
                 <div className="upload-box-actions">
                     <button
                         className={`upload-button ${themeBackground}`}
-                        onClick={() => fileInputRef.current?.click()}
+                        onClick={() => !disabled && fileInputRef.current?.click()}
                         onDrop={handleDrop}
                         onDragOver={handleDragOver}
                         type="button"
+                        disabled={disabled}
                     >
                         <CloudArrowUpIcon className={`upload-icon ${themeColor}`} />
                         <span className="upload-button-text">Click to upload or drag files</span>
                         <CloudArrowUpIcon className={`upload-icon ${themeColor}`} />
                     </button>
+                    <p className="upload-file-types">
+                        {acceptedExtensions.join(', ')} up to {maxSizeMB}MB
+                    </p>
                 </div>
             </div>
 
@@ -151,12 +204,14 @@ export default function FileUploadBox({
                 onChange={handleFileChange}
                 className="hidden-file-input"
                 multiple
-                accept=".pdf,.docx,.txt"
+                accept={acceptedExtensions.join(',')}
+                disabled={disabled}
             />
 
             {/* Files row */}
             {selectedFiles.length > 0 && (
                 <div className="upload-files-container">
+                    <div className="files-list-header">Selected Files ({selectedFiles.length})</div>
                     <div className="files-list">
                         {selectedFiles.map((file, index) => (
                             <div
@@ -165,18 +220,23 @@ export default function FileUploadBox({
                             >
                                 {getFileIcon(file.name)}
                                 <span className="file-name">
-                                    {file.name.length > 15 ? file.name.substring(0, 15) + '...' : file.name}
+                                    {file.name}
                                 </span>
-                                <button
-                                    type="button"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        removeFile(index);
-                                    }}
-                                    className="remove-file-button"
-                                >
-                                    <XMarkIcon className="remove-icon" aria-hidden="true" />
-                                </button>
+                                <span className="file-size">
+                                    {(file.size / (1024 * 1024)).toFixed(1)} MB
+                                </span>
+                                {!disabled && (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeFile(index);
+                                        }}
+                                        className="remove-file-button"
+                                    >
+                                        <XMarkIcon className="remove-icon" aria-hidden="true" />
+                                    </button>
+                                )}
                             </div>
                         ))}
                     </div>

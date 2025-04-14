@@ -1,0 +1,1 @@
+[{"origin": ["http://localhost:5173", "https://competitor-analysis-frontend-342114956303.us-central1.run.app"], "method": ["PUT", "GET", "HEAD"], "responseHeader": ["Content-Type", "Content-Length", "Content-Disposition", "Content-MD5", "Content-Encoding", "x-goog-*"], "maxAgeSeconds": 3600}]

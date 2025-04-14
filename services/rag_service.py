@@ -1,29 +1,68 @@
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Any, Union
 import os
-from .openai_service import OpenAIService
-from db.vector_db import VectorDB
-from PyPDF2 import PdfReader
-from docx import Document
 import io
 import re
+from concurrent.futures import ThreadPoolExecutor
+import uuid
+from openai import OpenAI
+
+# LangChain imports
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.docstore.document import Document as LangchainDocument
+
+# File processing imports
+from PyPDF2 import PdfReader
+from docx import Document as DocxDocument
 
 logger = logging.getLogger(__name__)
 
 
 class RAGService:
-    def __init__(self):
-        self.openai_service = OpenAIService()
-        self.vector_db = VectorDB()
-        self.chunk_size = 1000
-        self.chunk_overlap = 200
-        self._load_prompts()
+    def __init__(
+        self,
+        openai_service,
+        vector_db,
+        prompt_path: str = None,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        max_workers: int = 5,
+    ):
+        """Initialize the RAG Service with LangChain components for text splitting.
 
-    def _load_prompts(self):
+        Args:
+            openai_service: Service for OpenAI API calls
+            vector_db: Vector database service
+            prompt_path: Path to prompts file
+            chunk_size: Size of text chunks in characters
+            chunk_overlap: Overlap between chunks in characters
+            max_workers: Maximum number of parallel workers for processing tasks
+        """
+        self.openai_service = openai_service
+        self.vector_db = vector_db
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.max_workers = max_workers
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+
+        # Initialize LangChain text splitter only
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            length_function=len,
+            is_separator_regex=False,
+        )
+
+        # Load prompts
+        self.prompts = self._load_prompts(prompt_path)
+
+    def _load_prompts(self, prompt_path: str = None):
         """Load prompt templates from file."""
         # Get the absolute path to the prompts file
         current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        prompts_path = os.path.join(current_dir, "prompts", "template_prompts.txt")
+        prompts_path = prompt_path or os.path.join(
+            current_dir, "prompts", "template_prompts.txt"
+        )
 
         try:
             with open(prompts_path, "r") as f:
@@ -113,12 +152,27 @@ class RAGService:
             logger.error(f"Error loading prompts: {str(e)}")
             raise Exception(f"Error loading prompts: {str(e)}")
 
-    def _extract_text_from_file(self, content: bytes, filename: str) -> str:
+    def _extract_text_from_file(
+        self, content: bytes, filename: str, content_type: str = None
+    ) -> str:
         """Extract text from different file types."""
         file_extension = os.path.splitext(filename.lower())[1]
 
         try:
-            if file_extension == ".pdf":
+            # Try to determine file type from extension or provided content type
+            if not file_extension and content_type:
+                # Map content types to extensions
+                content_type_map = {
+                    "application/pdf": ".pdf",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+                    "text/plain": ".txt",
+                }
+                file_extension = content_type_map.get(content_type, "")
+                logger.info(
+                    f"Determined file extension from content type: {file_extension}"
+                )
+
+            if file_extension == ".pdf" or content_type == "application/pdf":
                 # Handle PDF files
                 pdf_file = io.BytesIO(content)
                 pdf_reader = PdfReader(pdf_file)
@@ -127,109 +181,151 @@ class RAGService:
                     text += page.extract_text() + "\n"
                 return text
 
-            elif file_extension == ".docx":
+            elif (
+                file_extension == ".docx"
+                or content_type
+                == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ):
                 # Handle DOCX files
                 doc_file = io.BytesIO(content)
-                doc = Document(doc_file)
+                doc = DocxDocument(doc_file)
                 text = ""
                 for paragraph in doc.paragraphs:
                     text += paragraph.text + "\n"
                 return text
 
-            elif file_extension == ".txt":
+            elif file_extension == ".txt" or content_type == "text/plain":
                 # Handle plain text files
                 return content.decode("utf-8")
 
             else:
-                raise ValueError(f"Unsupported file type: {file_extension}")
+                raise ValueError(
+                    f"Unsupported file type: "
+                    f"{file_extension or content_type or 'unknown'}"
+                )
 
         except Exception as e:
             logger.error(f"Error extracting text from {filename}: {str(e)}")
             raise
 
     async def process_document(
-        self, content: bytes, filename: str, file_type: str = None
+        self,
+        file_content: bytes,
+        filename: str,
+        file_type: str = None,
+        content_type: str = None,
     ):
-        """Process and store a document in the vector database.
+        """Process a document using LangChain for chunking.
 
         Args:
-            content: Raw file content
+            file_content: Binary content of the file
             filename: Name of the file
-            file_type: Type of document ('competitor' or 'business')
+            file_type: Type of the file ('competitor' or 'business')
+            content_type: MIME type of the file content
+
+        Returns:
+            Dictionary with processing results
         """
         try:
-            logger.info(
-                f"Processing document: {filename} as {file_type or 'unknown type'}"
-            )
+            logger.info(f"Processing document: {filename}, type: {file_type}")
 
-            # Extract text based on file type
-            text = self._extract_text_from_file(content, filename)
-            logger.info(f"Successfully extracted text from {filename}")
-
-            # Remove any null bytes and normalize whitespace
-            text = text.replace("\x00", "").strip()
-            text = " ".join(text.split())
-
+            # Extract text from document
+            text = self._extract_text_from_file(file_content, filename, content_type)
             if not text:
+                logger.error(f"Failed to extract text from {filename}")
                 raise ValueError(f"No text content extracted from {filename}")
 
-            chunks = self._chunk_text(text)
-            logger.info(f"Created {len(chunks)} chunks")
+            # Create Langchain document
+            langchain_doc = LangchainDocument(
+                page_content=text,
+                metadata={"source": filename, "doc_type": file_type or "unknown"},
+            )
 
-            for i, chunk in enumerate(chunks):
-                if chunk.strip():  # Only process non-empty chunks
-                    logger.info(f"Processing chunk {i+1}/{len(chunks)}")
-                    embedding = self.openai_service.get_embedding(chunk)
-                    # Include file_type in metadata
-                    metadata = {"source": filename, "doc_type": file_type or "unknown"}
+            # Use LangChain text splitter to create chunks
+            documents = self.text_splitter.split_documents([langchain_doc])
+            total_chunks = len(documents)
+            logger.info(f"Created {total_chunks} chunks with LangChain")
+
+            # Track progress
+            processed_chunks = 0
+
+            # Process chunks in batches to avoid overwhelming the API
+            batch_size = min(self.max_workers, 10)  # Process up to 10 chunks at a time
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i : i + batch_size]
+
+                # Process each chunk in the batch
+                for doc in batch:
+                    # Get embedding using our existing OpenAI service
+                    embedding = self.openai_service.get_embedding(doc.page_content)
+
+                    # Store in vector DB with metadata
                     await self.vector_db.add_document(
-                        text=chunk, embedding=embedding, metadata=metadata
+                        text=doc.page_content,
+                        embedding=embedding,
+                        metadata=doc.metadata,
                     )
+
+                # Update progress
+                processed_chunks += len(batch)
+                progress_percent = int(processed_chunks / total_chunks * 100)
+                logger.info(
+                    f"Processing progress: {processed_chunks}/{total_chunks} chunks ({progress_percent}%)"
+                )
+
             logger.info(f"Successfully processed document: {filename}")
+
+            # Return processing details
+            return {
+                "status": "success",
+                "message": f"Processed {total_chunks} chunks with LangChain",
+                "total_chunks": total_chunks,
+                "processed_chunks": processed_chunks,
+            }
 
         except Exception as e:
             logger.error(f"Error processing document: {str(e)}")
             raise
 
     async def get_relevant_context(self, query: str) -> Tuple[List[Dict], List[Dict]]:
-        """Retrieve relevant context for a query, separated by type.
+        """Get relevant context for a query.
+
+        Args:
+            query: The query to retrieve context for
 
         Returns:
-            Tuple containing (competitor_context, business_context)
+            Tuple containing two lists of dictionaries:
+            - Competitor documents with text and metadata
+            - Business documents with text and metadata
         """
         try:
-            logger.info(f"Getting embedding for query: {query}")
+            # Get embedding for the query using our existing service
             query_embedding = self.openai_service.get_embedding(query)
-            logger.info("Searching vector database")
 
-            # Get all relevant documents
+            # Retrieve relevant documents from vector DB
             results = await self.vector_db.search(query_embedding, limit=10)
 
-            # Separate results by document type
+            # Separate competitor and business documents
             competitor_docs = []
             business_docs = []
 
             for doc in results:
-                doc_type = doc["metadata"].get("doc_type", "unknown")
+                doc_type = doc.get("metadata", {}).get("doc_type", "unknown")
+
                 if doc_type == "competitor":
                     competitor_docs.append(doc)
                 elif doc_type == "business":
                     business_docs.append(doc)
-                else:
-                    # For backward compatibility, add to both if type unknown
-                    competitor_docs.append(doc)
-                    business_docs.append(doc)
-
-            # Limit to top 5 of each type
-            competitor_docs = competitor_docs[:5]
-            business_docs = business_docs[:5]
 
             logger.info(
-                f"Found {len(competitor_docs)} competitor docs and {len(business_docs)} business docs"
+                f"Retrieved {len(competitor_docs)} competitor and "
+                f"{len(business_docs)} business documents"
             )
-            return (competitor_docs, business_docs)
+
+            return competitor_docs, business_docs
+
         except Exception as e:
-            logger.error(f"Error getting relevant context: {str(e)}")
+            logger.error(f"Error retrieving context: {str(e)}")
             raise
 
     async def clear_vector_db(self):
@@ -255,6 +351,9 @@ class RAGService:
 
             total_length = len(competitor_text) + len(business_text)
             logger.info(f"Generating analysis with context length: {total_length}")
+            logger.info(f"Query: {query}")
+            logger.info(f"Competitor text length: {len(competitor_text)}")
+            logger.info(f"Business text length: {len(business_text)}")
 
             # Get the template directly from the file to avoid any potential truncation
             current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -289,8 +388,25 @@ class RAGService:
 
             logger.info(f"Template length: {len(template)} chars")
             logger.info(f"Template preview: {template[:300]}...")
-            logger.info(f"Template middle part: {template[300:600]}...")
-            logger.info(f"Template end part: {template[-300:]}...")
+            logger.info(f"Template middle part: " f"{template[300:600]}...")
+            logger.info(f"Template end part: " f"{template[-300:]}...")
+
+            # Check template for required placeholders
+            required_placeholders = ["{query}", "{context}", "{business_context}"]
+            missing_placeholders = [
+                p for p in required_placeholders if p not in template
+            ]
+            if missing_placeholders:
+                logger.warning(f"Template missing placeholders: {missing_placeholders}")
+                # Add missing placeholders to template if needed
+                if "{context}" not in template:
+                    logger.info("Adding {context} placeholder to template")
+                    template = template.replace(
+                        "Competitor Context:", "Competitor Context:\n{context}"
+                    )
+                if "{business_context}" not in template:
+                    logger.info("Adding {business_context} placeholder to template")
+                    template += "\n\nBusiness Context:\n{business_context}"
 
             # Format the template with the provided values
             try:
@@ -302,21 +418,25 @@ class RAGService:
                     section_requirements = template[start_idx : start_idx + 800]
                     logger.info(f"Section requirements: {section_requirements}")
 
-                # Format the template
+                # Format the template with both competitor and business contexts
                 prompt = template.format(
-                    query=query,
-                    context=competitor_text,
+                    query=query, context=competitor_text, business_context=business_text
                 )
                 logger.info("Template formatting successful")
+                logger.info(f"Final prompt length: {len(prompt)} chars")
+                logger.info(f"Final prompt preview: {prompt[:200]}...")
 
             except Exception as e:
                 logger.error(f"Template formatting failed: {e}")
                 # Fall back to basic formatting
                 prompt = (
-                    f"You are a strategic business analyst. Based on the provided context about competitors "
-                    f"and the specific query, provide a detailed competitive analysis and strategic recommendations.\n\n"
+                    f"You are a strategic business analyst. "
+                    f"Based on the provided context about competitors "
+                    f"and the specific query, provide a detailed competitive analysis "
+                    f"and strategic recommendations.\n\n"
                     f"User's query: {query}\n\n"
                     f"Competitor context:\n{competitor_text}\n\n"
+                    f"Business context:\n{business_text}\n\n"
                     f"Generate a comprehensive analysis with these sections:\n"
                     f"1. Executive Summary\n"
                     f"2. List of Top Competitors\n"
@@ -336,14 +456,3 @@ class RAGService:
         except Exception as e:
             logger.error(f"Error generating analysis: {str(e)}")
             raise
-
-    def _chunk_text(self, text: str) -> List[str]:
-        """Split text into chunks with overlap."""
-        chunks = []
-        start = 0
-        while start < len(text):
-            end = start + self.chunk_size
-            chunk = text[start:end]
-            chunks.append(chunk)
-            start = end - self.chunk_overlap
-        return chunks

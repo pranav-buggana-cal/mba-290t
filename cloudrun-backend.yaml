@@ -5,12 +5,13 @@ metadata:
 spec:
   template:
     spec:
+      timeoutSeconds: 600
       containers:
-      - image: gcr.io/genai-strategy-class/competitor-analysis-backend:latest
+      - image: gcr.io/genai-strategy-class/competitor-analysis-backend
         ports:
         - containerPort: 8000
         command: ["uvicorn"]
-        args: ["main:app", "--host", "0.0.0.0", "--port", "8000"]
+        args: ["main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]
         env:
         - name: OPENAI_API_KEY
           valueFrom:
@@ -34,10 +35,12 @@ spec:
             secretKeyRef:
               name: auth-password
               key: latest
+        - name: GCS_BUCKET_NAME
+          value: "competitor-analysis-uploads"
         resources:
           limits:
-            cpu: "1"
-            memory: "512Mi"
+            cpu: "2"
+            memory: "1Gi"
           requests:
-            cpu: "500m"
-            memory: "256Mi" 
+            cpu: "1"
+            memory: "512Mi" 

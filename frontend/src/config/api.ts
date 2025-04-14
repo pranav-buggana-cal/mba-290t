@@ -7,7 +7,10 @@ export const API_CONFIG = {
     ENDPOINTS: {
         AUTH: '/token',
         UPLOAD: '/upload-documents',
-        ANALYZE: '/analyze-competitors'
+        ANALYZE: '/analyze-competitors',
+        // New storage endpoints
+        GET_UPLOAD_URL: '/storage/get-upload-url',
+        COMPLETE_UPLOAD: '/storage/complete-upload'
     }
 } as const;
 

@@ -734,3 +734,125 @@ button:focus-visible {
 .analysis-submit-enabled:hover {
   background-color: #001f3f;
 }
+
+/* Upload Progress Container */
+.upload-progress-container {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  background-color: #f9fafb;
+}
+
+.progress-heading {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.75rem;
+  color: #374151;
+}
+
+.progress-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.progress-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filename {
+  width: 10rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.75rem;
+}
+
+.progress-bar-container {
+  flex: 1;
+  height: 0.5rem;
+  background-color: #e5e7eb;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: 9999px;
+}
+
+.progress-active {
+  background-color: #3b82f6;
+}
+
+.progress-complete {
+  background-color: #10b981;
+}
+
+.progress-failed {
+  background-color: #ef4444;
+}
+
+.progress-status {
+  width: 4rem;
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+/* LangChain Processing Styles */
+.processing-progress-container {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border-radius: 0.375rem;
+  background-color: var(--background-dark);
+}
+
+.processing-details {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--secondary-medium);
+}
+
+.langchain-label {
+  display: flex;
+  align-items: center;
+}
+
+.langchain-label svg {
+  margin-right: 0.25rem;
+  width: 14px;
+  height: 14px;
+}
+
+.langchain-progress-bar {
+  height: 0.5rem;
+  border-radius: 0.25rem;
+  background-color: var(--secondary-light);
+  overflow: hidden;
+}
+
+.langchain-progress-fill {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+
+.langchain-progress-active {
+  background-color: var(--primary-gold);
+}
+
+.langchain-progress-complete {
+  background-color: var(--success-dark);
+}
+
+.langchain-tooltip {
+  display: inline-block;
+  margin-left: 0.5rem;
+  cursor: help;
+  color: var(--secondary-medium);
+  font-size: 0.75rem;
+}
