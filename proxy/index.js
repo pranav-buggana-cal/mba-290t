@@ -2,10 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const axios = require('axios');
+const formidable = require('formidable');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const TARGET = process.env.TARGET || 'https://competitor-analysis-backend-342114956303.us-central1.run.app';
+const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT || '300000', 10); // 5 minutes in milliseconds
 
 // Configure body parser limits for larger files (200MB)
 app.use(express.json({ limit: '200mb' }));
@@ -95,10 +99,16 @@ const uploadProxy = createProxyMiddleware({
         '^/api': '', // Remove /api prefix when forwarding
     },
     // Set much longer timeout for file uploads
-    proxyTimeout: 300000, // 5 minutes for large files
-    timeout: 300000, // 5 minutes
+    proxyTimeout: 600000, // 10 minutes for large files
+    timeout: 600000, // 10 minutes
     onProxyReq: (proxyReq, req, res) => {
         console.log(`Proxying file upload: ${req.method} ${req.url} → ${TARGET}${proxyReq.path}`);
+        console.log(`Upload content type: ${req.headers['content-type']}`);
+
+        // Log content length if available
+        if (req.headers['content-length']) {
+            console.log(`Upload content length: ${req.headers['content-length']} bytes`);
+        }
 
         // Preserve Authorization header
         if (req.headers.authorization) {
@@ -108,9 +118,8 @@ const uploadProxy = createProxyMiddleware({
             console.warn('No authorization header in upload request - authentication may fail');
         }
 
-        // For multipart/form-data, we do not set the content-type manually
-        // The browser will set it with the proper boundary
-        console.log('Content-Type:', req.headers['content-type']);
+        // For multipart/form-data, we do not need to modify the body
+        // The http-proxy-middleware handles this automatically
     },
     onProxyRes: (proxyRes, req, res) => {
         const statusCode = proxyRes.statusCode;
@@ -141,10 +150,27 @@ const uploadProxy = createProxyMiddleware({
     },
     onError: (err, req, res) => {
         console.error('File upload proxy error:', err);
-        res.status(500).json({
+
+        // Add more detailed error logging
+        if (err.code === 'ECONNRESET') {
+            console.error('Connection reset by the server - may indicate a timeout or server crash');
+        } else if (err.code === 'ECONNREFUSED') {
+            console.error('Connection refused - backend server may be down');
+        } else if (err.code === 'ETIMEDOUT') {
+            console.error('Connection timed out - backend server may be overloaded');
+        }
+
+        // Set CORS headers
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
             error: 'File Upload Error',
             message: err.message
-        });
+        }));
     }
 });
 
@@ -305,7 +331,12 @@ app.post('/api/analyze-competitors', async (req, res) => {
 });
 
 // Use the upload proxy specifically for the upload endpoint
-app.use('/api/upload-documents', uploadProxy);
+// app.use('/api/upload-documents', function (req, res, next) {
+//     // Set a longer timeout for upload requests
+//     req.setTimeout(REQUEST_TIMEOUT);
+//     res.setTimeout(REQUEST_TIMEOUT);
+//     next();
+// }, uploadProxy);
 
 // Use the regular proxy for all other API routes
 app.use('/api', apiProxy);
@@ -317,6 +348,165 @@ app.get('/health', (req, res) => {
         message: 'Proxy server is running',
         target: TARGET
     });
+});
+
+// Add error handling for timeouts
+app.use(function (err, req, res, next) {
+    if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
+        console.error('Request timed out:', req.url);
+        return res.status(504).json({ error: 'Request timed out. The file may be too large or the server is busy.' });
+    }
+    next(err);
+});
+
+// Add custom file upload handling
+app.post('/api/upload-documents', async (req, res) => {
+    console.log('Custom file upload handler called');
+    const timeoutValue = parseInt(REQUEST_TIMEOUT, 10);
+    console.log(`Setting request timeout to ${timeoutValue}ms`);
+    req.setTimeout(timeoutValue);
+    res.setTimeout(timeoutValue);
+
+    try {
+        // Ensure proper CORS headers
+        res.set({
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Credentials': 'true'
+        });
+
+        // Check authentication
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            console.error('Missing authorization header');
+            return res.status(401).json({ error: 'Missing authorization header' });
+        }
+
+        // Configure formidable to handle the multipart form
+        const form = formidable({
+            maxFileSize: 200 * 1024 * 1024, // 200MB max size
+            multiples: true,
+            uploadDir: path.join(__dirname, 'temp'),
+            keepExtensions: true,
+            allowEmptyFiles: false,
+        });
+
+        // Create temp directory if it doesn't exist
+        const tempDir = path.join(__dirname, 'temp');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+
+        console.log('Parsing form data...');
+
+        // Parse the form (formidable v3.x API)
+        try {
+            const [fields, files] = await form.parse(req);
+
+            console.log('Form parsed successfully');
+            console.log('Fields:', fields);
+            console.log('Files received:', files ? (files.files ? files.files.length : 0) : 0);
+
+            // Create FormData to send to backend
+            const FormData = require('form-data');
+            const formData = new FormData();
+
+            // Handle file_type parameter if it exists
+            const fileType = fields.file_type ? fields.file_type[0] : 'competitor';
+            formData.append('file_type', fileType);
+
+            // Add each file to form data (formidable v3.x returns arrays for fields)
+            if (files && files.files) {
+                const fileArray = files.files;
+
+                for (const file of fileArray) {
+                    console.log(`Processing file: ${file.originalFilename}, size: ${file.size} bytes, path: ${file.filepath}`);
+
+                    try {
+                        // Read file from temp storage
+                        const fileContent = fs.readFileSync(file.filepath);
+
+                        // Add to form data
+                        formData.append('files', fileContent, {
+                            filename: file.originalFilename,
+                            contentType: file.mimetype
+                        });
+                    } catch (fileError) {
+                        console.error(`Error reading file ${file.originalFilename}:`, fileError);
+                    }
+                }
+
+                console.log('Files added to form data, sending to backend...');
+
+                try {
+                    // Send to backend
+                    console.log(`Forwarding ${fileArray.length} files to backend: ${TARGET}/upload-documents`);
+                    const response = await axios.post(`${TARGET}/upload-documents`, formData, {
+                        headers: {
+                            ...formData.getHeaders(),
+                            'Authorization': authHeader
+                        },
+                        timeout: parseInt(REQUEST_TIMEOUT, 10)
+                    });
+
+                    // Clean up temp files
+                    for (const file of fileArray) {
+                        try {
+                            if (fs.existsSync(file.filepath)) {
+                                fs.unlinkSync(file.filepath);
+                                console.log(`Cleaned up temp file: ${file.filepath}`);
+                            }
+                        } catch (cleanupError) {
+                            console.error(`Error cleaning up temp file ${file.filepath}:`, cleanupError);
+                        }
+                    }
+
+                    // Return backend response
+                    console.log('Upload successful, returning response');
+                    return res.status(response.status).json(response.data);
+                } catch (uploadError) {
+                    console.error('Error forwarding to backend:', uploadError.message);
+
+                    // Clean up temp files
+                    for (const file of fileArray) {
+                        try {
+                            if (fs.existsSync(file.filepath)) {
+                                fs.unlinkSync(file.filepath);
+                            }
+                        } catch (cleanupError) {
+                            console.error(`Error cleaning up temp file ${file.filepath}:`, cleanupError);
+                        }
+                    }
+
+                    // Handle different error types
+                    if (uploadError.response) {
+                        return res.status(uploadError.response.status).json(uploadError.response.data);
+                    } else {
+                        return res.status(500).json({
+                            error: 'Upload failed',
+                            message: uploadError.message
+                        });
+                    }
+                }
+            } else {
+                console.error('No files found in upload');
+                return res.status(400).json({ error: 'No files provided' });
+            }
+        } catch (parseError) {
+            console.error('Form parsing error:', parseError);
+            return res.status(500).json({
+                error: 'Failed to parse form data',
+                message: parseError.message
+            });
+        }
+    } catch (error) {
+        console.error('Unexpected error in upload handler:', error);
+        return res.status(500).json({
+            error: 'Unexpected error',
+            message: error.message
+        });
+    }
 });
 
 // Start the server

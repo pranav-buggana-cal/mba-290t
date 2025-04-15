@@ -5,7 +5,11 @@ import io
 import re
 from concurrent.futures import ThreadPoolExecutor
 import uuid
+import asyncio
 from openai import OpenAI
+import json
+import tempfile
+import random
 
 # LangChain imports
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -17,6 +21,13 @@ from docx import Document as DocxDocument
 
 logger = logging.getLogger(__name__)
 
+# Define small file threshold (in characters)
+SMALL_FILE_THRESHOLD = 5000  # Skip chunking for files below 5000 characters
+# Define optimal batch size for processing
+OPTIMAL_BATCH_SIZE = 20  # Process 20 chunks at a time for better throughput
+# Maximum batch size (hard limit to avoid overwhelming API)
+MAX_BATCH_SIZE = 50
+
 
 class RAGService:
     def __init__(
@@ -24,8 +35,8 @@ class RAGService:
         openai_service,
         vector_db,
         prompt_path: str = None,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
+        chunk_size: int = 5000,
+        chunk_overlap: int = 600,
         max_workers: int = 5,
     ):
         """Initialize the RAG Service with LangChain components for text splitting.
@@ -52,6 +63,10 @@ class RAGService:
             length_function=len,
             is_separator_regex=False,
         )
+
+        # Cache the original settings for later reference
+        self._original_chunk_size = self.chunk_size
+        self._original_chunk_overlap = self.chunk_overlap
 
         # Load prompts
         self.prompts = self._load_prompts(prompt_path)
@@ -228,6 +243,8 @@ class RAGService:
         """
         try:
             logger.info(f"Processing document: {filename}, type: {file_type}")
+            file_size = len(file_content)
+            logger.info(f"File size: {file_size} bytes")
 
             # Extract text from document
             text = self._extract_text_from_file(file_content, filename, content_type)
@@ -235,14 +252,73 @@ class RAGService:
                 logger.error(f"Failed to extract text from {filename}")
                 raise ValueError(f"No text content extracted from {filename}")
 
-            # Create Langchain document
+            # Calculate text stats for logging
+            text_length = len(text)
+            line_count = text.count("\n") + 1
+            logger.info(
+                f"Extracted {text_length} characters, {line_count} lines from {filename}"
+            )
+
+            # Handle different file sizes
+            active_splitter = self.text_splitter
+            if text_length > 100000:  # For extremely large files (>100K chars)
+                logger.info(
+                    f"Large file detected ({text_length} chars). Using smaller chunks."
+                )
+                # Create a temporary text splitter with smaller chunks for large files
+                new_chunk_size = min(2000, self._original_chunk_size)
+                new_chunk_overlap = min(100, self._original_chunk_overlap)
+
+                active_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=new_chunk_size,
+                    chunk_overlap=new_chunk_overlap,
+                    length_function=len,
+                    is_separator_regex=False,
+                )
+                logger.info(
+                    f"Created temporary text splitter with smaller chunk size: {new_chunk_size} "
+                    f"(original: {self._original_chunk_size})"
+                )
+
+            # Check if this is a small file that can skip chunking
+            if text_length <= SMALL_FILE_THRESHOLD:
+                logger.info(
+                    f"Small file detected ({text_length} chars). Using fast path without chunking."
+                )
+
+                # Process the entire document as a single chunk
+                metadata = {"source": filename, "doc_type": file_type or "unknown"}
+
+                # Get embedding for the entire document
+                embedding = await self.openai_service.get_embedding(text)
+
+                # Store in vector DB
+                await self.vector_db.add_document(
+                    text=text,
+                    embedding=embedding,
+                    metadata=metadata,
+                )
+
+                logger.info(
+                    f"Successfully processed small document as single chunk: {filename}"
+                )
+
+                # Return processing details
+                return {
+                    "status": "success",
+                    "message": "Processed small document as single chunk",
+                    "total_chunks": 1,
+                    "processed_chunks": 1,
+                }
+
+            # For larger documents, create chunks with LangChain
             langchain_doc = LangchainDocument(
                 page_content=text,
                 metadata={"source": filename, "doc_type": file_type or "unknown"},
             )
 
-            # Use LangChain text splitter to create chunks
-            documents = self.text_splitter.split_documents([langchain_doc])
+            # Use the selected text splitter to create chunks
+            documents = active_splitter.split_documents([langchain_doc])
             total_chunks = len(documents)
             logger.info(f"Created {total_chunks} chunks with LangChain")
 
@@ -250,35 +326,55 @@ class RAGService:
             processed_chunks = 0
 
             # Process chunks in batches to avoid overwhelming the API
-            batch_size = min(self.max_workers, 10)  # Process up to 10 chunks at a time
-            for i in range(0, len(documents), batch_size):
-                batch = documents[i : i + batch_size]
+            # For large files, use smaller batch sizes
+            if text_length > 50000:  # >50K chars
+                adaptive_batch_size = min(5, self.max_workers)  # Smaller batches
+            else:
+                # Determine optimal batch size based on document size
+                adaptive_batch_size = min(
+                    max(OPTIMAL_BATCH_SIZE, self.max_workers * 2),  # Scale with workers
+                    MAX_BATCH_SIZE,  # But don't exceed max
+                    max(1, total_chunks // 4),  # Divide into 4+ batches if possible
+                )
 
-                # Process each chunk in the batch
-                for doc in batch:
-                    # Get embedding using our existing OpenAI service
-                    embedding = self.openai_service.get_embedding(doc.page_content)
+            logger.info(
+                f"Processing {total_chunks} chunks "
+                f"in batches of {adaptive_batch_size}"
+            )
 
-                    # Store in vector DB with metadata
-                    await self.vector_db.add_document(
-                        text=doc.page_content,
-                        embedding=embedding,
-                        metadata=doc.metadata,
-                    )
+            # Track processing progress and handle errors for large documents
+            try:
+                # Create asyncio tasks for batch processing
+                tasks = []
+
+                for i in range(0, total_chunks, adaptive_batch_size):
+                    batch = documents[i : i + adaptive_batch_size]
+                    # Use asyncio coroutine directly instead of ThreadPoolExecutor
+                    tasks.append(self._process_chunk_batch(batch, file_type))
+
+                # Wait for all tasks to complete with proper asyncio handling
+                results = await asyncio.gather(*tasks)
 
                 # Update progress
-                processed_chunks += len(batch)
+                processed_chunks = sum(results)
                 progress_percent = int(processed_chunks / total_chunks * 100)
                 logger.info(
-                    f"Processing progress: {processed_chunks}/{total_chunks} chunks ({progress_percent}%)"
+                    f"Processing progress: {processed_chunks}/{total_chunks} "
+                    f"chunks ({progress_percent}%)"
                 )
+
+            except Exception as e:
+                logger.error(f"Error processing document: {str(e)}")
+                raise
 
             logger.info(f"Successfully processed document: {filename}")
 
             # Return processing details
             return {
                 "status": "success",
-                "message": f"Processed {total_chunks} chunks with LangChain",
+                "message": (
+                    f"Processed {processed_chunks}/{total_chunks} chunks with LangChain"
+                ),
                 "total_chunks": total_chunks,
                 "processed_chunks": processed_chunks,
             }
@@ -300,7 +396,7 @@ class RAGService:
         """
         try:
             # Get embedding for the query using our existing service
-            query_embedding = self.openai_service.get_embedding(query)
+            query_embedding = await self.openai_service.get_embedding(query)
 
             # Retrieve relevant documents from vector DB
             results = await self.vector_db.search(query_embedding, limit=10)
@@ -388,8 +484,8 @@ class RAGService:
 
             logger.info(f"Template length: {len(template)} chars")
             logger.info(f"Template preview: {template[:300]}...")
-            logger.info(f"Template middle part: " f"{template[300:600]}...")
-            logger.info(f"Template end part: " f"{template[-300:]}...")
+            logger.info(f"Template middle part: {template[300:600]}...")
+            logger.info(f"Template end part: {template[-300:]}...")
 
             # Check template for required placeholders
             required_placeholders = ["{query}", "{context}", "{business_context}"]
@@ -449,10 +545,54 @@ class RAGService:
                 logger.info("Used simplified fallback template")
 
             # Generate the analysis
-            analysis = self.openai_service.generate_completion(prompt)
+            analysis = await self.openai_service.generate_completion(prompt)
             logger.info(f"Generated analysis of length: {len(analysis)}")
 
             return analysis
         except Exception as e:
             logger.error(f"Error generating analysis: {str(e)}")
             raise
+
+    async def _process_chunk_batch(self, batch, file_type):
+        """Process a batch of document chunks by adding them to the vector database.
+
+        Args:
+            batch: List of LangchainDocument objects to process
+            file_type: Type of the document ('competitor' or 'business')
+
+        Returns:
+            Number of successfully processed chunks
+        """
+        try:
+            logger.info(f"Processing batch of {len(batch)} chunks")
+
+            # Extract text from each document in the batch
+            texts = [doc.page_content for doc in batch]
+
+            # Get embeddings for all texts in the batch
+            embeddings = await self.openai_service.get_embeddings_batch(texts)
+
+            # Process each document with its embedding
+            processed_count = 0
+            for i, (doc, embedding) in enumerate(zip(batch, embeddings)):
+                try:
+                    # Prepare metadata from the document
+                    metadata = doc.metadata.copy()
+                    if file_type and "doc_type" not in metadata:
+                        metadata["doc_type"] = file_type
+
+                    # Add to vector database
+                    await self.vector_db.add_document(
+                        text=doc.page_content, embedding=embedding, metadata=metadata
+                    )
+                    processed_count += 1
+                except Exception as e:
+                    logger.error(f"Error processing document chunk {i}: {str(e)}")
+
+            logger.info(f"Successfully processed {processed_count}/{len(batch)} chunks")
+            return processed_count
+
+        except Exception as e:
+            logger.error(f"Error in batch processing: {str(e)}")
+            # Return 0 for fully failed batches
+            return 0

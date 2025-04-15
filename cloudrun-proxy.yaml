@@ -2,9 +2,18 @@ apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: competitor-analysis-proxy
+  annotations:
+    run.googleapis.com/timestamp: "20250414163105"
 spec:
   template:
+    metadata:
+      annotations:
+        run.googleapis.com/timestamp: "20250414163105"
+        # Add client-side timeouts to handle longer operations
+        run.googleapis.com/cloudsql-instances: ""
+        autoscaling.knative.dev/maxScale: "10"
     spec:
+      timeoutSeconds: 600  # Increase timeout to 10 minutes
       containers:
       - image: gcr.io/genai-strategy-class/competitor-analysis-proxy:latest
         ports:
@@ -12,6 +21,14 @@ spec:
         env:
         - name: TARGET
           value: https://competitor-analysis-backend-342114956303.us-central1.run.app
+        - name: NODE_ENV
+          value: "production"
+        - name: REQUEST_TIMEOUT
+          value: "300000"  # 5 minutes in milliseconds (needs to be a string in YAML)
+        - name: BACKEND_URL
+          value: https://competitor-analysis-backend-20250414205020.us-central1.run.app
+        - name: FRONTEND_URL
+          value: https://competitor-analysis-frontend-20250414205020.us-central1.run.app
         resources:
           limits:
             cpu: "1"
