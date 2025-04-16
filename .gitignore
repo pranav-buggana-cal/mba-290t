@@ -208,4 +208,4 @@ output/
 .vscode/
 .idea/
 .DS_Store
-.service-account-key.json
+.service-account-key.jsonservice-account-key.json
